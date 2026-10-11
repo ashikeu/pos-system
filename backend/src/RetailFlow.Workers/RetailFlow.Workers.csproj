@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!-- Background host: outbox dispatcher, schedulers, alerts, reconciliation jobs. -->
+  <PropertyGroup>
+    <RootNamespace>RetailFlow.Workers</RootNamespace>
+    <UserSecretsId>retailflow-workers</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RetailFlow.Infrastructure\RetailFlow.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Serilog.AspNetCore" />
+  </ItemGroup>
+
+</Project>

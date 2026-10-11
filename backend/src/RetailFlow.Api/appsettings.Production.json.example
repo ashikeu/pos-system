@@ -1,0 +1,29 @@
+{
+  "//": "Copy to appsettings.Production.json and fill in. That file is git-ignored on purpose: it holds real secrets (ADR-0023).",
+  "ConnectionStrings": {
+    "Default": "Server=<host>;Database=RetailFlow;User Id=<user>;Password=<password>;Encrypt=True;TrustServerCertificate=False"
+  },
+  "Database": {
+    "ApplyMigrationsOnStartup": false
+  },
+  "Jwt": {
+    "Issuer": "https://api.example.com",
+    "Audience": "retailflow-clients",
+    "Algorithm": "RS256",
+    "SigningKey": "<32+ byte key, or PEM private key when using RS256>",
+    "AccessTokenMinutes": 10,
+    "RefreshTokenDays": 30
+  },
+  "PaymentProviders": {
+    "Bkash": {
+      "Enabled": true,
+      "Mode": "Live",
+      "BaseUrl": "https://tokenized.pay.bka.sh",
+      "AppKey": "<app key>",
+      "AppSecret": "<app secret>",
+      "Username": "<merchant username>",
+      "Password": "<merchant password>",
+      "CallbackSigningSecret": "<callback secret>"
+    }
+  }
+}

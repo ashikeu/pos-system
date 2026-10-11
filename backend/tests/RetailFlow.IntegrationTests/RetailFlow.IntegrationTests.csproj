@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Integration tests run against a real SQL Server: Testcontainers when Docker is up,
+       LocalDB otherwise (ADR-0020). Never the EF in-memory provider. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RetailFlow.Api\RetailFlow.Api.csproj" />
+    <ProjectReference Include="..\..\src\RetailFlow.Infrastructure\RetailFlow.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+</Project>

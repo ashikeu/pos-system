@@ -1,0 +1,66 @@
+# ---------- .NET ----------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+coverage/
+*.coverage
+*.trx
+.vs/
+artifacts/
+
+# ---------- Flutter / Dart ----------
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+.flutter-plugins
+.flutter-plugins-dependencies
+frontend/**/ios/Pods/
+frontend/**/ios/.symlinks/
+frontend/**/android/.gradle/
+frontend/**/android/local.properties
+frontend/**/windows/flutter/ephemeral/
+frontend/**/.idea/
+
+# ---------- Secrets / local config ----------
+# Configuration and secrets live in appsettings files (ADR-0023). Dev values are committed;
+# environment-specific files that hold real credentials are not.
+appsettings.Production.json
+appsettings.Staging.json
+appsettings.Local.json
+appsettings.*.Local.json
+!appsettings.Production.json.example
+secrets.json
+*.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.pem
+infra/secrets/
+
+# ---------- Databases / backups ----------
+*.mdf
+*.ldf
+*.bak
+*.sqlite
+*.sqlite3
+*.db-journal
+backups/
+
+# ---------- Tooling / OS ----------
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+node_modules/
