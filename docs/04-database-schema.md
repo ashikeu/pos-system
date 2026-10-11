@@ -13,7 +13,8 @@ all enumerated. Nothing here is created until its phase.
 | Topic | Convention |
 |---|---|
 | Table names | `PascalCase`, singular (`Sale`, `SaleLine`) |
-| Primary key | `Id uniqueidentifier` (UUIDv7, ADR-0005). Lookup tables may use `int` identity |
+| Primary key | `Id uniqueidentifier` (UUIDv7, ADR-0005), **non-clustered** on high-volume tables |
+| Clustered index | Chosen per table for how it is written and read, never the GUID key — SQL Server sorts GUIDs by their last bytes, so a UUIDv7 key is random for clustering (ADR-0024) |
 | Tenant column | `OrganizationId uniqueidentifier NOT NULL` on every tenant-owned table |
 | Audit columns | `CreatedAtUtc datetime2(3)`, `CreatedByUserId`, `UpdatedAtUtc`, `UpdatedByUserId` |
 | Soft delete | `IsDeleted bit`, `DeletedAtUtc`, `DeletedByUserId` — only where business requires recall |
@@ -24,6 +25,7 @@ all enumerated. Nothing here is created until its phase.
 | Enums | `tinyint`/`smallint` with a C# enum; values are append-only and documented |
 | Unique keys | tenant-scoped: `(OrganizationId, …)` |
 | Index names | `IX_<Table>_<Cols>`, unique `UX_`, FK `FK_<Child>_<Parent>` |
+| Large text | declared unbounded, never as a provider type name, so it maps to `nvarchar(max)`, `text` or `longtext` (ADR-0003) |
 | Delete behaviour | `NO ACTION` by default; `CASCADE` only from an aggregate root to its own lines |
 | Cross-tenant guard | child FKs include `OrganizationId` in composite references where applicable |
 

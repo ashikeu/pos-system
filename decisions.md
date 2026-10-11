@@ -30,6 +30,9 @@ Status values: `Accepted` · `Proposed` · `Superseded` · `Deprecated`.
 | [0021](#adr-0021) | Central package management, warnings-as-errors, pinned EF tooling | Accepted | 2026-10-11 |
 | [0022](#adr-0022) | GetX + Drift structure on the Flutter side | Accepted | 2026-10-11 |
 | [0023](#adr-0023) | Configuration and secrets live in appsettings files | Accepted | 2026-10-11 |
+| [0024](#adr-0024) | Non-clustered GUID keys with purpose-chosen clustered indexes | Accepted | 2026-10-11 |
+| [0025](#adr-0025) | The idempotency decorator owns its transaction | Accepted | 2026-10-11 |
+| [0026](#adr-0026) | Asynchronous saves only, and a fail-closed tenant filter | Accepted | 2026-10-11 |
 
 ---
 
@@ -138,6 +141,11 @@ their own uniqueness rules — never the PK.
 *Consequences.* 16-byte keys. A malicious client could choose an ID; the server therefore rejects
 IDs that already exist with different content (idempotency, ADR-0010) and never trusts a client ID
 to imply ownership.
+
+> **Amended by [ADR-0024](#adr-0024).** The claim that time ordering keeps SQL Server clustered
+> inserts sequential is wrong: SQL Server orders `uniqueidentifier` by its *last* six bytes, so a
+> UUIDv7 primary key is effectively random for clustering. The identifier format stands; the
+> physical layout changed.
 
 ---
 
@@ -521,3 +529,90 @@ out of scope entirely (ADR-0016) — no provider ever hands us a PAN to store.
 *Superseding.* If the deployment later moves to a managed host, this decision should be superseded
 by an ADR switching the secret-bearing sections to a key store; `IConfiguration` consumers would not
 change.
+
+---
+
+## Phase 2 — Platform foundations
+
+### ADR-0024
+**Non-clustered GUID keys with purpose-chosen clustered indexes** · Accepted · 2026-10-11
+
+*Context.* Implementing the schema exposed an error in ADR-0005. SQL Server compares
+`uniqueidentifier` values starting at bytes 10–15, not 0–5, so a UUIDv7 key — whose millisecond
+timestamp occupies the first six bytes — is random as far as a clustered index is concerned. Keeping
+the primary key clustered would scatter every insert across the table and cause page splits on the
+highest-volume tables in the system (`InventoryMovement`, `SaleLine`, `OutboxMessage`).
+
+*Decision.* Keep UUIDv7 identifiers, and choose each table's clustered index for how the table is
+written and read rather than defaulting to the key:
+
+| Table | Primary key | Clustered on |
+|---|---|---|
+| `OutboxMessage` | non-clustered | `(CreatedAtUtc, Id)` — append-only queue, oldest first |
+| `IdempotencyRecord` | non-clustered | `(OrganizationId, Key)` unique — the replay check is one seek |
+| `AuditLog` | non-clustered | `(OrganizationId, AtUtc, Id)` — written once, read by tenant and time |
+| `Branch` | non-clustered | `(OrganizationId, Code)` unique |
+| `Organization` | clustered | the key; a handful of rows, fragmentation irrelevant |
+
+Planned for later phases: `Sale` clusters on `(OrganizationId, BusinessDate, Id)`, `SaleLine` on
+`(SaleId, LineNumber)`, `InventoryMovement` on `(OrganizationId, OccurredAtUtc, Id)`, `StockBalance`
+on its natural unique key.
+
+*Alternatives rejected.* A `bigint identity` clustered surrogate on every table (an extra column
+plus a key lookup for every foreign-key join); re-ordering GUID bytes for SQL Server's collation
+(the stored value would no longer be the application's value, breaking cross-provider comparison and
+client-generated ids).
+
+*Consequences.* Portable index declarations live in the entity configurations; the clustering
+choices live in `SqlServerModelTuning`, which another provider simply does not apply. Every
+clustered key chosen here is immutable, so a row never physically moves.
+
+---
+
+### ADR-0025
+**The idempotency decorator owns its transaction** · Accepted · 2026-10-11
+
+*Context.* ADR-0010 and `docs/03-architecture.md` describe the pipeline as
+`Logging → Validation → Idempotency → Transaction → Handler`, with the idempotency lookup outside
+the transaction and the write inside it. Two independent decorators cannot express that: the
+response snapshot has to commit atomically with the business change, and only the decorator that
+opens the transaction can guarantee it.
+
+*Decision.* `IdempotentUseCase` performs the lookup before opening a transaction, then opens one and
+inside it reserves the key, runs the handler, stores the response and commits. A request that is not
+idempotent but is transactional gets `TransactionalUseCase` instead. The effective order is
+`Logging → Validation → (Idempotency ∪ Transaction) → Handler`, and a read-only request gets no
+transaction at all.
+
+A business failure rolls the transaction back **including the reservation**, so a rejected request
+stays retryable with the same key once the client has corrected the cause. An abandoned reservation
+(the process died mid-flight, leaving its transaction rolled back by the database) is taken over
+after five minutes — otherwise that key would be permanently unusable and the terminal could never
+retry the sale.
+
+*Consequences.* One class holds both concerns, which is why its transaction boundary is documented
+in `docs/03-architecture.md` §5. Verified by integration tests: replay returns the stored response
+without re-running the handler; a key reused with a different body is rejected; a rejected operation
+leaves neither the business row nor the reservation behind.
+
+---
+
+### ADR-0026
+**Asynchronous saves only, and a fail-closed tenant filter** · Accepted · 2026-10-11
+
+*Decision.* Two deliberate restrictions in the persistence layer:
+
+1. **`SaveChanges` (synchronous) throws `NotSupportedException`.** Stamping the sync cursor requires
+   a database round trip inside the save pipeline; doing that synchronously blocks a thread-pool
+   thread under load. Every write path in this system is async, so the synchronous overload can only
+   be reached by mistake — and failing loudly is better than silently skipping tenancy and audit
+   stamping.
+2. **The tenant query filter resolves to `Guid.Empty` when no tenant context exists**, which matches
+   no rows. A missing context therefore returns nothing rather than everything. Cross-tenant reads
+   require an explicit `IgnoreQueryFilters()` at the call site, which review and the authorization
+   tests can look for.
+
+*Consequences.* Seeders, background jobs and tests must set a tenant before writing tenant-owned
+rows, exactly as a request does. A write without context raises `MissingTenantContextException`, and
+a write whose row belongs to another tenant raises `TenantMismatchException`; both map to 403 with no
+information about the other tenant.

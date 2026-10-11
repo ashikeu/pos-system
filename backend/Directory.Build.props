@@ -18,14 +18,16 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     <Company>RetailFlow</Company>
     <Product>RetailFlow POS</Product>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- CA1716: 'Error' and 'Result' are deliberate names for the result pattern; this is an
+         application, not a cross-language library, so the VB keyword clash is irrelevant. -->
+    <NoWarn>$(NoWarn);CS1591;CA1716</NoWarn>
   </PropertyGroup>
 
   <!-- Test projects: relax the documentation/analyzer noise that only matters in production code. -->
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('Tests'))">
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <NoWarn>$(NoWarn);CA1707;CA2007;CA1861;xUnit1041</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;CA2007;CA1861;CA1001;CA1711;xUnit1041</NoWarn>
   </PropertyGroup>
 
 </Project>

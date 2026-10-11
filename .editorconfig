@@ -19,13 +19,22 @@ dotnet_style_prefer_conditional_expression_over_assignment = false:silent
 dotnet_diagnostic.CA1062.severity = none
 dotnet_diagnostic.CA2007.severity = none
 
-# Naming: private static fields PascalCase (checked before the instance-field rule)
-dotnet_naming_rule.private_static_fields_pascal.symbols = private_static_fields
-dotnet_naming_rule.private_static_fields_pascal.style = pascal
-dotnet_naming_rule.private_static_fields_pascal.severity = warning
-dotnet_naming_symbols.private_static_fields.applicable_kinds = field
-dotnet_naming_symbols.private_static_fields.applicable_accessibilities = private
-dotnet_naming_symbols.private_static_fields.required_modifiers = static
+# Naming: private constants PascalCase (checked first)
+dotnet_naming_rule.private_const_pascal.symbols = private_const_fields
+dotnet_naming_rule.private_const_pascal.style = pascal
+dotnet_naming_rule.private_const_pascal.severity = warning
+dotnet_naming_symbols.private_const_fields.applicable_kinds = field
+dotnet_naming_symbols.private_const_fields.applicable_accessibilities = private, internal, protected
+dotnet_naming_symbols.private_const_fields.required_modifiers = const
+
+# Naming: private static readonly fields PascalCase (checked before the instance-field rule).
+# Mutable statics keep the _camelCase form so they stand out from constants-like values.
+dotnet_naming_rule.private_static_readonly_pascal.symbols = private_static_readonly_fields
+dotnet_naming_rule.private_static_readonly_pascal.style = pascal
+dotnet_naming_rule.private_static_readonly_pascal.severity = warning
+dotnet_naming_symbols.private_static_readonly_fields.applicable_kinds = field
+dotnet_naming_symbols.private_static_readonly_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_static_readonly_fields.required_modifiers = static,readonly
 dotnet_naming_style.pascal.capitalization = pascal_case
 
 # Naming: private instance fields _camelCase
@@ -49,3 +58,14 @@ trim_trailing_whitespace = false
 
 [*.sh]
 end_of_line = lf
+
+# EF Core generates migration files; they are not hand-maintained, so style and
+# performance analyzers are off there. Never edit an applied migration (ADR-0021,
+# docs/04-database-schema.md §13).
+[**/Migrations/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA1062.severity = none
+dotnet_diagnostic.IDE0300.severity = none
+dotnet_diagnostic.IDE0161.severity = none

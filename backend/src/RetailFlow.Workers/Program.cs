@@ -1,12 +1,14 @@
 using System.Globalization;
+using RetailFlow.Application;
+using RetailFlow.Infrastructure;
+using RetailFlow.Workers.Jobs;
 using Serilog;
 
 namespace RetailFlow.Workers;
 
 /// <summary>
-/// Background host for the outbox dispatcher, provider status queries, alerting, retention and
-/// reconciliation jobs. Phase 1 establishes the host; the first hosted service (the outbox
-/// dispatcher, ADR-0011) is registered in Phase 2 — the host intentionally runs idle until then.
+/// Background host. Phase 2 runs the outbox dispatcher; provider status queries, alerting,
+/// retention and reconciliation jobs join it in later phases (see ../../../tasks.md).
 /// </summary>
 public static class Program
 {
@@ -27,6 +29,12 @@ public static class Program
                 .Enrich.FromLogContext()
                 .Enrich.WithProperty("Application", "RetailFlow.Workers")
                 .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture));
+
+            builder.Services
+                .AddApplication()
+                .AddInfrastructure(builder.Configuration);
+
+            builder.Services.AddHostedService<OutboxDispatcherWorker>();
 
             var host = builder.Build();
             host.Run();

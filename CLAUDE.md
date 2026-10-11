@@ -104,7 +104,17 @@ dotnet ef migrations add <Name> -p src/RetailFlow.Infrastructure -s src/RetailFl
 dotnet ef database update          -p src/RetailFlow.Infrastructure -s src/RetailFlow.Api
 dotnet ef migrations script        -p src/RetailFlow.Infrastructure -s src/RetailFlow.Api -i -o ../artifacts/migrate.sql
 
-dotnet run --project src/RetailFlow.Api    # Swagger UI at /swagger
+dotnet run --project src/RetailFlow.Api    # http://localhost:5274, Swagger UI at /swagger
+#   Development also applies migrations and seeds the demo tenant (DevDataSeeder):
+#   organization 0193f000-0000-7000-8000-000000000001, branch ...002
+```
+
+Integration tests create their own database per run. They look for a server in this order:
+`RETAILFLOW_TEST_CONNECTION` (used by CI with Testcontainers), then `localhost`, then LocalDB.
+
+```bash
+dotnet test tests/RetailFlow.IntegrationTests            # local SQL Server
+RETAILFLOW_TEST_CONNECTION="Server=...;Integrated Security=True" dotnet test   # explicit server
 ```
 
 Flutter (from `frontend/retailflow_app/`, Phase 13+):
@@ -147,6 +157,10 @@ Server=localhost;Database=RetailFlow;Trusted_Connection=True;TrustServerCertific
 9. Entities are never API contracts. DTOs live in `Application/<Module>/Contracts`.
 10. Errors are RFC 9457 `application/problem+json` carrying `traceId` and `correlationId` — ADR-0014.
 11. External calls (payment providers, printers, SMS) never run inside a DB transaction.
+12. Always `SaveChangesAsync`; the synchronous overload throws by design (ADR-0026).
+13. A retryable operation's request implements `IIdempotentRequest`, a plain write implements
+    `ITransactionalRequest`, a query implements neither — the pipeline reads those markers to decide
+    transactions and replay (ADR-0025).
 
 **Flutter**
 

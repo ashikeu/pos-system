@@ -5,7 +5,7 @@ Single source of truth for status. Update it in the same change that moves the w
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done (built + tested) · `[!]` blocked ·
 `[-]` deferred (with reason)
 
-Last updated: **2026-10-11** · Current phase: **Phase 1 (complete) → Phase 2 next**
+Last updated: **2026-10-11** · Current phase: **Phase 2 (complete) → Phase 3 next**
 
 ---
 
@@ -14,7 +14,7 @@ Last updated: **2026-10-11** · Current phase: **Phase 1 (complete) → Phase 2 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Foundation: requirements, decisions, structure, schema design, roadmap | `[x]` |
-| 2 | Platform foundations: EF Core, tenancy, audit, outbox, idempotency, migrations, seed | `[ ]` |
+| 2 | Platform foundations: EF Core, tenancy, audit, outbox, idempotency, migrations, seed | `[x]` |
 | 3 | Identity & authorization | `[ ]` |
 | 4 | Tenancy management (organizations, branches, warehouses, terminals, settings) | `[ ]` |
 | 5 | Catalog, pricing & tax configuration | `[ ]` |
@@ -69,31 +69,58 @@ Blocked / waiting on externals:
       integration test — 39 tests green
 - [x] ADR-0023: all configuration and secrets in `appsettings*.json` per user direction
 
-## Phase 2 — Platform foundations `[ ]`
+## Phase 2 — Platform foundations `[x]`
 
-- [ ] `Domain/Platform`: `Entity`, `AggregateRoot`, `ITenantOwned`, `IAuditable`, `ISoftDeletable`,
-      `IHasChangeSequence`, `Money`, `Quantity`, `Result`/`Error`, `DomainException`
-- [ ] `Application/Platform` ports: `IClock`, `IGuidGenerator`, `ITenantContext`, `ICurrentUser`,
-      `IUnitOfWork`, `ICacheService`, `IDistributedLock`, `IRowLocker`, `IEventPublisher`,
-      `IIdempotencyStore`, `IAuditWriter`
-- [ ] `RetailFlowDbContext` + convention-based configuration (decimal precision, UTC conversion,
-      `OrganizationId` stamping, global query filters, change-sequence assignment)
-- [ ] Interceptors: tenant stamp + mismatch rejection, audit fields, change sequence, outbox flush
-- [ ] `OutboxMessage` + dispatcher worker (lease, backoff with jitter, dead letter, metrics)
-- [ ] `IdempotencyRecord` store + `IdempotentAttribute` filter (replay, in-progress, key reuse)
-- [ ] `AuditLog` writer (actor, action, entity, before/after diff, correlation id, ip, device)
-- [ ] API cross-cutting: ProblemDetails handler, correlation-id middleware, Serilog structured
-      logging, request logging with redaction, rate limiting, health/readiness endpoints,
-      API versioning, Swagger with auth
-- [ ] `appsettings` per environment (all secrets in these files, ADR-0023) + options validation on
-      startup: fail fast on bad config and refuse to start in Production with the dev signing key
-- [ ] Initial migration + `dotnet ef database update` against localhost SQL Server
-- [ ] Dev seed data (demo organization, branch, warehouse, terminal, roles, admin user)
-- [ ] Integration test harness (LocalDB/Testcontainers switch, DB-per-run, migration test)
-- [ ] Tests: tenant-filter enforcement, tenant-mismatch rejection, idempotency replay,
-      outbox retry/dead-letter, decimal precision round-trip, UTC round-trip
+- [x] `Domain/Platform`: `Entity`, `AggregateRoot`, `AuditableAggregateRoot`, `TenantEntity`,
+      `ITenantOwned`, `IAuditable`, `ISoftDeletable`, `IHasChangeSequence`, `IDomainEvent`,
+      `Money`, `RoundingPolicy`, `Result`/`Error`, `UuidV7`, `BusinessDay`, domain exceptions
+- [x] `Application/Platform` ports: `IClock`, `IGuidGenerator`, `ITenantContext`, `ICurrentUser`,
+      `ICorrelationContext`, `IUnitOfWork`, `ICacheService`, `IDistributedLock`, `IRowLocker`,
+      `IEventPublisher`, `IIdempotencyStore`, `IAuditWriter`, `IOutboxMessageHandler`
+- [x] Use-case pipeline: `IUseCase`, `IIdempotentRequest`, `ITransactionalRequest`, and the
+      Logging / Validating / Transactional / Idempotent decorators wired in a fixed order (ADR-0025)
+- [x] `RetailFlowDbContext` with decimal-precision conventions, per-entity configurations and
+      fail-closed tenant query filters (ADR-0026)
+- [x] `TenantAuditInterceptor`: tenant stamping and cross-tenant rejection, audit fields,
+      soft-delete conversion, domain-event draining to the outbox, sync-cursor assignment
+- [x] `SqlServerChangeSequenceAllocator` (one `UPDATE ... OUTPUT` per save), `SqlServerRowLocker`
+      (`UPDLOCK, HOLDLOCK, ROWLOCK`, ascending key order), `SqlServerModelTuning` (clustering, ADR-0024)
+- [x] `OutboxMessage` + dispatcher with lease, `READPAST` claim, exponential backoff with jitter,
+      dead-lettering, and the `OutboxDispatcherWorker` background host
+- [x] `IdempotencyRecord` store with replay, in-progress, key-reuse and stale-takeover handling
+- [x] `AuditLog` writer (actor, tenant, branch, terminal, before/after, correlation id, ip, agent)
+- [x] API cross-cutting: ProblemDetails (RFC 9457) mapping and `GlobalExceptionHandler`,
+      correlation-id middleware, Serilog structured logging, API versioning, Swagger,
+      `/health/live` and `/health/ready` (database + schema version + outbox backlog)
+- [x] `appsettings` per environment with all secrets in the files (ADR-0023); provider options
+      validated on start-up; migrations applied on start-up only when configuration allows it
+- [x] Initial migration `InitialPlatformSchema` created and applied to `localhost\RetailFlow`
+- [x] Dev seed: demo organization and main branch with stable ids (`DevDataSeeder`)
+- [x] Integration harness: per-run SQL Server database (env var → localhost → LocalDB), migration
+      applied per run, scopes with a chosen tenant
+- [x] Tests (102 total, all executed): tenant isolation (8), idempotency (6), outbox (5),
+      backoff arithmetic (9), persistence platform (9), health endpoints (5), money/rounding (34),
+      UUIDv7 (7), business day (6), result (6), layer boundaries (2)
+
+### Deferred out of Phase 2, with reasons
+
+- [-] Redis cache and RabbitMQ publisher: ports exist (`ICacheService`, `IDistributedLock`,
+      `IEventPublisher`) with in-memory and in-process implementations. Wiring the real services
+      without a second node or a real consumer would be ceremony (ADR-0011).
+- [-] Users, roles and terminals in the seed: those entities belong to Phases 3 and 4. The seeder
+      creates the tenant they hang from.
+- [-] Testcontainers: the Docker daemon is not running on this machine, so integration tests use
+      the local SQL Server instance. CI sets `RETAILFLOW_TEST_CONNECTION` (ADR-0020).
+- [-] OpenTelemetry traces and metrics: packages are pinned; exporting is a Phase 17 task together
+      with the dashboards and alerts that give it a purpose.
+- [-] Rate limiting: configured values exist in `appsettings.json`, enforcement lands with the auth
+      endpoints it protects (Phase 3).
 
 ## Phase 3 — Identity & authorization `[ ]`
+
+Entry state: platform primitives, tenancy enforcement, idempotency, outbox, audit and the
+migration pipeline are in place and tested, so each identity slice can be built as
+domain → persistence → use case → endpoint → test.
 
 - [ ] Entities: `User`, `Role`, `Permission`, `RolePermission`, `UserRole`, `UserBranch`,
       `RefreshToken`, `UserSession`, `LoginAttempt`, `DeviceRegistration`, `MfaSecret`

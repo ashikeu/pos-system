@@ -3,8 +3,9 @@
 Multi-tenant Point of Sale and Retail Management platform — ASP.NET Core 8 + SQL Server backend,
 Flutter clients (Windows desktop, Android/iOS, web admin), offline-first checkout.
 
-**Status: Phase 1 complete (foundation).** The backend solution builds and its tests pass; no
-business endpoints exist yet. See `tasks.md` for what is next.
+**Status: Phase 2 complete (platform foundations).** Multi-tenant persistence, idempotency, the
+transactional outbox, audit, health checks and the migration pipeline are in place and tested
+against a real SQL Server. Business endpoints start with Phase 3 (identity). See `tasks.md`.
 
 ## Start here
 
@@ -25,8 +26,8 @@ business endpoints exist yet. See `tasks.md` for what is next.
 cd backend
 dotnet tool restore      # pinned dotnet-ef 8.0.10
 dotnet build             # warning-free (warnings are errors)
-dotnet test              # 39 tests
-dotnet run --project src/RetailFlow.Api   # Swagger at /swagger, health at /health/live
+dotnet test              # 102 tests (integration tests need a local SQL Server)
+dotnet run --project src/RetailFlow.Api   # http://localhost:5274 — /swagger, /health/live, /health/ready
 ```
 
 Development database: `Server=localhost;Database=RetailFlow;Trusted_Connection=True` (SQL Server

@@ -148,14 +148,20 @@ sequenceDiagram
   Ctl-->>C: 200/201 + DTO, or ProblemDetails
 ```
 
-Decorator order is fixed and explicit: `Logging → Validation → Idempotency → Transaction → Audit →
-Handler`. Idempotency sits **outside** the transaction decorator for the lookup and **inside** it for
-the write, so the stored response commits atomically with the business change (ADR-0010).
+Decorator order is fixed and explicit, outermost first: `Logging → Validation → Idempotency or
+Transaction → Handler`. Idempotency and the transaction are **one** decorator, because the stored
+response has to commit atomically with the business change and two independent decorators cannot
+guarantee that (ADR-0025). It looks the key up before opening the transaction, then reserves it,
+runs the handler and stores the response inside it. A request that is retryable implements
+`IIdempotentRequest`; one that merely writes implements `ITransactionalRequest`; a read-only query
+implements neither and gets no transaction. Audit rows are written by the handler through
+`IAuditWriter` on the same context, so they commit with the change.
 
 ## 5. Transaction boundaries
 
 | Operation | One DB transaction covers | Explicitly outside |
 |---|---|---|
+| **Any idempotent operation** | idempotency reservation + the handler's work + the stored response snapshot + outbox messages + audit rows + sync-cursor allocation (ADR-0025) | the key lookup that precedes it |
 | **Create sale** | sale + lines + line taxes + discounts + stock movements + balance updates + reservations release + cash/credit payments + loyalty accrual + customer ledger + numbering allocation + outbox messages + idempotency record | provider payment calls, printing, email/SMS, report refresh |
 | **Card/MFS payment** | tx1: payment row `Pending`; tx2: outcome applied (`Completed`/`Failed`/`UnknownOutcome`) + sale state + cash/loyalty effects | the provider HTTP call between tx1 and tx2 |
 | **Provider callback** | verify + payment state transition + sale settle + outbox | nothing |
@@ -167,10 +173,15 @@ the write, so the stored response commits atomically with the business change (A
 | **Sync push (batch)** | **one transaction per operation**, never per batch | the HTTP batch itself |
 
 Isolation level: `READ COMMITTED` (SQL Server default) plus explicit row locks where correctness
-needs them (`IRowLocker` → `UPDLOCK, ROWLOCK` on `StockBalance`, numbering allocators, credit
-accounts, cash sessions). Locks are always acquired in a canonical order (table, then key) to avoid
-deadlocks; the transaction decorator retries on deadlock (1205) and serialization failures up to 3
-times with jitter.
+needs them (`IRowLocker` → `UPDLOCK, HOLDLOCK, ROWLOCK` on `StockBalance`, numbering allocators,
+credit accounts, cash sessions). Locks are always acquired in ascending key order to avoid
+deadlocks. Retries come from the EF execution strategy (`EnableRetryOnFailure`), which the unit of
+work wraps around the whole transaction — a retry re-runs the operation from a cleared change
+tracker, never half of it.
+
+The per-tenant sync cursor is allocated inside the same transaction by a single
+`UPDATE ... OUTPUT` statement under a row lock, in one block per save (ADR-0018), so a 50-line sale
+costs one allocation rather than fifty.
 
 Long-running work (reports, imports, exports, reconciliation) never holds a transaction: it reads
 with `AsNoTracking` and, where appropriate, snapshot reads.
