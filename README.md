@@ -3,9 +3,11 @@
 Multi-tenant Point of Sale and Retail Management platform — ASP.NET Core 8 + SQL Server backend,
 Flutter clients (Windows desktop, Android/iOS, web admin), offline-first checkout.
 
-**Status: Phase 2 complete (platform foundations).** Multi-tenant persistence, idempotency, the
-transactional outbox, audit, health checks and the migration pipeline are in place and tested
-against a real SQL Server. Business endpoints start with Phase 3 (identity). See `tasks.md`.
+**Status: Phase 3 complete (identity and authorization).** On top of the Phase 2 platform
+(multi-tenant persistence, idempotency, outbox, audit, health checks), the API now has working
+sign-in with rotating refresh tokens, a 111-code permission catalog with role templates,
+branch-scoped authorization, optional TOTP MFA and rate limiting. Next: Phase 4, tenancy
+management. See `tasks.md`.
 
 ## Start here
 
@@ -26,7 +28,7 @@ against a real SQL Server. Business endpoints start with Phase 3 (identity). See
 cd backend
 dotnet tool restore      # pinned dotnet-ef 8.0.10
 dotnet build             # warning-free (warnings are errors)
-dotnet test              # 102 tests (integration tests need a local SQL Server)
+dotnet test              # 217 tests (integration tests need a local SQL Server)
 dotnet run --project src/RetailFlow.Api   # http://localhost:5274 — /swagger, /health/live, /health/ready
 ```
 

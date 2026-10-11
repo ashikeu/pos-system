@@ -13,8 +13,18 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <!-- The infrastructure implementations are internal on purpose: nothing outside this assembly
+       should depend on a concrete hasher or token service. The test project needs to construct
+       them directly, which is the one legitimate exception. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>RetailFlow.IntegrationTests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

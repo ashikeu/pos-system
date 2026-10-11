@@ -5,7 +5,7 @@ Single source of truth for status. Update it in the same change that moves the w
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done (built + tested) · `[!]` blocked ·
 `[-]` deferred (with reason)
 
-Last updated: **2026-10-11** · Current phase: **Phase 2 (complete) → Phase 3 next**
+Last updated: **2026-10-11** · Current phase: **Phase 3 (complete) → Phase 4 next**
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: **2026-10-11** · Current phase: **Phase 2 (complete) → Phase 3 
 |---|---|---|
 | 1 | Foundation: requirements, decisions, structure, schema design, roadmap | `[x]` |
 | 2 | Platform foundations: EF Core, tenancy, audit, outbox, idempotency, migrations, seed | `[x]` |
-| 3 | Identity & authorization | `[ ]` |
+| 3 | Identity & authorization | `[x]` |
 | 4 | Tenancy management (organizations, branches, warehouses, terminals, settings) | `[ ]` |
 | 5 | Catalog, pricing & tax configuration | `[ ]` |
 | 6 | Inventory core (ledger, balances, adjustments, counts, transfers) | `[ ]` |
@@ -116,25 +116,67 @@ Blocked / waiting on externals:
 - [-] Rate limiting: configured values exist in `appsettings.json`, enforcement lands with the auth
       endpoints it protects (Phase 3).
 
-## Phase 3 — Identity & authorization `[ ]`
+## Phase 3 — Identity & authorization `[x]`
 
-Entry state: platform primitives, tenancy enforcement, idempotency, outbox, audit and the
-migration pipeline are in place and tested, so each identity slice can be built as
-domain → persistence → use case → endpoint → test.
+- [x] Entities: `User`, `Role`, `Permission`, `RolePermission`, `UserRole`, `UserBranch`,
+      `UserBranchPermission`, `RefreshToken`, `UserSession`, `LoginAttempt`, `DeviceRegistration`,
+      `MfaSecret`, `UserToken` (reset + verification), with the `IdentitySchema` migration applied
+- [x] Permission catalog: 111 codes in source, synced to the `Permission` table on start-up, plus
+      six system role templates (Owner, Manager, Cashier, Stock Keeper, Accountant, Auditor)
+- [x] Password hashing: PBKDF2-HMAC-SHA512, versioned self-describing format, iteration floor,
+      rehash-on-login when the stored parameters are outdated (ADR-0028)
+- [x] Login with organization code + email + password; lockout with escalating duration; per-account
+      failure throttle; login history for every attempt, successful or not
+- [x] Refresh with unconditional rotation, single use, and family revocation on reuse detection
+      (raises `identity.refresh-token-reuse-detected` through the outbox)
+- [x] Logout, and logout-everywhere which rotates the security stamp so live tokens stop working
+- [x] Change password, forgot/reset password (single-use hashed tokens, enumeration-safe answers),
+      email verification
+- [x] Optional TOTP MFA: two-step enrolment, replay-protected codes, password required to disable
+- [x] Session list and per-session revoke; device registration returning its secret once
+- [x] `[HasPermission]` attribute, on-demand policy provider and one authorization handler;
+      permissions are always resolved server-side (ADR-0027)
+- [x] Branch scoping: `X-Branch-Id` validated against current grants in middleware
+- [x] JWT bearer authentication with security-stamp validation (30-second cache), ProblemDetails
+      challenge responses, layered rate limits (global budget plus a tighter `/auth/*` policy)
+- [x] Audit events for privileged actions: password change and reset, session revocation,
+      sign-out-everywhere, MFA on and off, device registration
+- [x] Dev seed: system roles for the demo tenant and an owner account
+      (`owner@demo.retailflow.local`; the development password lives in `IdentitySeeder`)
+- [x] Tests (217 total, all executed): 33 domain identity (lockout escalation, stamp rotation,
+      email rules, permission catalog and role template shape), 19 application (password policy,
+      branch resolution), 31 crypto (PBKDF2, token generation, AES-GCM, TOTP against the RFC 6238
+      vectors), 32 end-to-end over HTTP (sign-in, lockout, suspended tenant, deactivated account,
+      rotation, reuse detection, logout, stale-stamp rejection, forged token, permission denial and
+      allowance, branch scope, cross-tenant isolation, password change, MFA enrolment, rate limiting)
 
-- [ ] Entities: `User`, `Role`, `Permission`, `RolePermission`, `UserRole`, `UserBranch`,
-      `RefreshToken`, `UserSession`, `LoginAttempt`, `DeviceRegistration`, `MfaSecret`
-- [ ] Password hashing service + rehash-on-login, password policy, reset tokens
-- [ ] Login, refresh (rotation + family reuse detection), logout, logout-all
-- [ ] Permission catalog + seeding; system role templates
-- [ ] `HasPermissionAttribute` + requirement handler; branch-scope authorization filter
-- [ ] Lockout, per-IP/account rate limits, login history, session & device management
-- [ ] Optional TOTP MFA for privileged roles; email verification + password reset flows
-- [ ] Audit events for every privileged action
-- [ ] Tests: token rotation, reuse detection, lockout, permission matrix, branch restriction,
-      cross-tenant login attempt, expired/forged token rejection
+### Three behaviours the tests corrected
+
+- MFA enrolment used to rotate the security stamp, so the request right after enrolling returned
+  403. Enabling or disabling MFA no longer ends sessions (ADR-0029).
+- `RequireRateLimiting` on `MapControllers` silently overrode the stricter `/auth/*` policy; the
+  broad budget is now the global limiter instead (ADR-0027).
+- `UseRateLimiter` placed before `UseRouting` ignored endpoint policies entirely, so no limit was
+  applied at all.
+
+### Deferred out of Phase 3, with reasons
+
+- [-] User and role administration endpoints (create user, assign role, grant branch access): the
+      permissions exist and are enforced, but the write endpoints belong with organization
+      provisioning in Phase 4, which has to create the first owner account anyway.
+- [!] Real email delivery: `IEmailSender` logs what it would send (`Email:Provider = None`). Token
+      creation, expiry and single use are real; an SMTP adapter needs credentials.
+- [-] Argon2id password hashing: PBKDF2 ships now, and the swap is a registration change plus
+      rehash-on-login behind `IPasswordHasher` (ADR-0028). Tracked for Phase 17.
+- [-] RS256 signing and key rotation: HS256 for now, and the token service refuses to start with any
+      other algorithm rather than signing with the wrong key material. Phase 18, with key management.
+- [-] Platform-operator cross-tenant endpoints: `IsPlatformOperator` and the permission codes exist;
+      the endpoints that use them arrive with the admin surface.
 
 ## Phase 4 — Tenancy management `[ ]`
+
+Entry state: authentication, authorization and branch scoping work end to end, so provisioning can
+create an organization with roles, an owner and a terminal that can sign in immediately.
 
 - [ ] Entities: `Organization`, `Branch`, `Warehouse`, `PosTerminal`, `OrganizationSettings`,
       `BranchSettings`, `SubscriptionPlan`, `OrganizationSubscription`, `FeatureLimit`

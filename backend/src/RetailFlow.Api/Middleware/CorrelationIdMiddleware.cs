@@ -1,5 +1,4 @@
 using RetailFlow.Application.Platform.Abstractions;
-using RetailFlow.Infrastructure.Platform.Services;
 using Serilog.Context;
 
 namespace RetailFlow.Api.Middleware;

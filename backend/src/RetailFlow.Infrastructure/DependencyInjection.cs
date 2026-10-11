@@ -2,7 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using RetailFlow.Application.Identity.Abstractions;
 using RetailFlow.Application.Platform.Abstractions;
+using RetailFlow.Infrastructure.Identity.Persistence;
+using RetailFlow.Infrastructure.Identity.Services;
 using RetailFlow.Infrastructure.Platform.Persistence;
 using RetailFlow.Infrastructure.Platform.Persistence.Interceptors;
 using RetailFlow.Infrastructure.Platform.Persistence.SqlServer;
@@ -67,6 +70,7 @@ public static class DependencyInjection
         services.AddAmbientContexts();
         services.AddPlatformServices();
         services.AddPersistence(connectionString, databaseOptions);
+        services.AddIdentityServices(configuration);
 
         return services;
     }
@@ -116,6 +120,66 @@ public static class DependencyInjection
         services.TryAddSingleton<IOutboxClaimStrategy, SqlServerOutboxClaimStrategy>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Identity: hashing, tokens, MFA, permission resolution. Options are bound once and shared as
+    /// a singleton, and the hasher validates them eagerly so a bad signing key fails at start-up
+    /// rather than at the first sign-in.
+    /// </summary>
+    private static IServiceCollection AddIdentityServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var options = BuildAuthenticationOptions(configuration);
+        services.AddSingleton(options);
+
+        services.TryAddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+        services.TryAddSingleton<ISecureTokenGenerator, SecureTokenGenerator>();
+        services.TryAddSingleton<ISecretProtector, AesGcmSecretProtector>();
+        services.TryAddSingleton<ITotpService, TotpService>();
+        services.TryAddSingleton<IAccessTokenService, JwtAccessTokenService>();
+        services.TryAddSingleton<IEmailSender, LoggingEmailSender>();
+
+        services.TryAddScoped<IIdentityRepository, IdentityRepository>();
+        services.TryAddScoped<IPermissionResolver, PermissionResolver>();
+        services.TryAddScoped<IUserSecurityStateProvider, UserSecurityStateProvider>();
+        services.AddScoped<PermissionCatalogSeeder>();
+        services.AddScoped<IdentitySeeder>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Binds <c>Jwt</c> and <c>Security</c> into one options object. Both sections live in
+    /// appsettings (ADR-0023); a missing signing key is caught by the token service on start-up.
+    /// </summary>
+    public static AuthenticationOptions BuildAuthenticationOptions(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var jwt = configuration.GetSection(AuthenticationOptions.JwtSection);
+        var security = configuration.GetSection(AuthenticationOptions.SecuritySection);
+        var defaults = new AuthenticationOptions();
+
+        return new AuthenticationOptions
+        {
+            Issuer = jwt["Issuer"] ?? defaults.Issuer,
+            Audience = jwt["Audience"] ?? defaults.Audience,
+            Algorithm = jwt["Algorithm"] ?? defaults.Algorithm,
+            SigningKey = jwt["SigningKey"] ?? defaults.SigningKey,
+            AccessTokenMinutes = jwt.GetValue<int?>("AccessTokenMinutes") ?? defaults.AccessTokenMinutes,
+            RefreshTokenDays = jwt.GetValue<int?>("RefreshTokenDays") ?? defaults.RefreshTokenDays,
+            ClockSkewSeconds = jwt.GetValue<int?>("ClockSkewSeconds") ?? defaults.ClockSkewSeconds,
+            PasswordIterations = security.GetValue<int?>("PasswordIterations") ?? defaults.PasswordIterations,
+            MinimumPasswordLength = security.GetValue<int?>("MinimumPasswordLength") ?? defaults.MinimumPasswordLength,
+            MaxFailedAccessAttempts = security.GetValue<int?>("MaxFailedAccessAttempts") ?? defaults.MaxFailedAccessAttempts,
+            LockoutMinutes = security.GetValue<int?>("LockoutMinutes") ?? defaults.LockoutMinutes,
+            PasswordResetTokenMinutes = security.GetValue<int?>("PasswordResetTokenMinutes") ?? defaults.PasswordResetTokenMinutes,
+            EmailVerificationTokenHours = security.GetValue<int?>("EmailVerificationTokenHours") ?? defaults.EmailVerificationTokenHours,
+            RequireMfaForRoles = security.GetSection("RequireMfaForRoles").Get<string[]>() ?? [],
+            SecretProtectionKey = security["SecretProtectionKey"] ?? defaults.SecretProtectionKey,
+        };
     }
 
     private static IServiceCollection AddPersistence(

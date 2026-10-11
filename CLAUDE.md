@@ -105,8 +105,10 @@ dotnet ef database update          -p src/RetailFlow.Infrastructure -s src/Retai
 dotnet ef migrations script        -p src/RetailFlow.Infrastructure -s src/RetailFlow.Api -i -o ../artifacts/migrate.sql
 
 dotnet run --project src/RetailFlow.Api    # http://localhost:5274, Swagger UI at /swagger
-#   Development also applies migrations and seeds the demo tenant (DevDataSeeder):
-#   organization 0193f000-0000-7000-8000-000000000001, branch ...002
+#   Development applies migrations, syncs the permission catalog and seeds the demo tenant:
+#   organization DEMO (0193f000-...-0001), branch MAIN (...-0002), owner (...-0003).
+#   Sign in with organizationCode DEMO, email owner@demo.retailflow.local and the
+#   development password in IdentitySeeder.
 ```
 
 Integration tests create their own database per run. They look for a server in this order:
@@ -158,7 +160,11 @@ Server=localhost;Database=RetailFlow;Trusted_Connection=True;TrustServerCertific
 10. Errors are RFC 9457 `application/problem+json` carrying `traceId` and `correlationId` — ADR-0014.
 11. External calls (payment providers, printers, SMS) never run inside a DB transaction.
 12. Always `SaveChangesAsync`; the synchronous overload throws by design (ADR-0026).
-13. A retryable operation's request implements `IIdempotentRequest`, a plain write implements
+13. Every endpoint carries `[HasPermission(...)]` or a documented reason to be anonymous. Never
+    check a role name directly - permissions are the contract (ADR-0013).
+14. Permissions are resolved server-side per request; a permission list in a token or a request
+    body is decoration, never authorization (ADR-0027).
+15. A retryable operation's request implements `IIdempotentRequest`, a plain write implements
     `ITransactionalRequest`, a query implements neither — the pipeline reads those markers to decide
     transactions and replay (ADR-0025).
 

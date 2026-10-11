@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using RetailFlow.Application.Platform.Abstractions;
+using RetailFlow.Domain.Identity;
 using RetailFlow.Domain.Platform;
 using RetailFlow.Domain.Tenancy;
 using RetailFlow.Infrastructure.Platform.Persistence.Records;
@@ -27,6 +28,32 @@ public sealed class RetailFlowDbContext : DbContext
     public DbSet<Organization> Organizations => Set<Organization>();
 
     public DbSet<Branch> Branches => Set<Branch>();
+
+    public DbSet<User> Users => Set<User>();
+
+    public DbSet<Role> Roles => Set<Role>();
+
+    public DbSet<Permission> Permissions => Set<Permission>();
+
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+
+    public DbSet<UserRole> UserRoles => Set<UserRole>();
+
+    public DbSet<UserBranch> UserBranches => Set<UserBranch>();
+
+    public DbSet<UserBranchPermission> UserBranchPermissions => Set<UserBranchPermission>();
+
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
+
+    public DbSet<LoginAttempt> LoginAttempts => Set<LoginAttempt>();
+
+    public DbSet<DeviceRegistration> DeviceRegistrations => Set<DeviceRegistration>();
+
+    public DbSet<MfaSecret> MfaSecrets => Set<MfaSecret>();
+
+    public DbSet<UserToken> UserTokens => Set<UserToken>();
 
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 

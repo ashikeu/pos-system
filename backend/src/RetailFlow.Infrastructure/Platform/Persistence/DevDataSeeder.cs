@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RetailFlow.Application.Platform.Abstractions;
 using RetailFlow.Domain.Tenancy;
+using RetailFlow.Infrastructure.Identity.Persistence;
 
 namespace RetailFlow.Infrastructure.Platform.Persistence;
 
@@ -11,9 +12,9 @@ namespace RetailFlow.Infrastructure.Platform.Persistence;
 /// changes nothing.
 /// </summary>
 /// <remarks>
-/// Users, roles, terminals and catalog data arrive with the phases that own those entities
-/// (Phase 3 and Phase 4). This seeder only establishes the tenant the rest can hang from, and it
-/// refuses to run against a database that already has other organizations in it.
+/// Terminals, warehouses and catalog data arrive with the phases that own those entities
+/// (Phase 4 and Phase 5). Roles and the demo owner account are created by
+/// <see cref="IdentitySeeder"/>, which this seeder calls once the tenant exists.
 /// </remarks>
 public sealed class DevDataSeeder
 {
@@ -25,19 +26,23 @@ public sealed class DevDataSeeder
 
     private readonly RetailFlowDbContext _context;
     private readonly IMutableTenantContext _tenant;
+    private readonly IdentitySeeder _identitySeeder;
     private readonly ILogger<DevDataSeeder> _logger;
 
     public DevDataSeeder(
         RetailFlowDbContext context,
         IMutableTenantContext tenant,
+        IdentitySeeder identitySeeder,
         ILogger<DevDataSeeder> logger)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(tenant);
+        ArgumentNullException.ThrowIfNull(identitySeeder);
         ArgumentNullException.ThrowIfNull(logger);
 
         _context = context;
         _tenant = tenant;
+        _identitySeeder = identitySeeder;
         _logger = logger;
     }
 
@@ -98,6 +103,11 @@ public sealed class DevDataSeeder
         {
             _tenant.Clear();
         }
+
+        // Roles and the owner account come last: they reference the organization and branch above.
+        await _identitySeeder
+            .SeedDemoOwnerAsync(DemoOrganizationId, DemoBranchId, cancellationToken)
+            .ConfigureAwait(false);
     }
 }
 

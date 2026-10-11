@@ -102,3 +102,20 @@ public interface IMutableCorrelationContext : ICorrelationContext
 {
     void Set(string correlationId);
 }
+
+/// <summary>
+/// Transport details of the current call, recorded on audit rows, sessions and login history.
+/// Supplied by the API layer; background jobs leave it empty.
+/// </summary>
+public interface IRequestMetadata
+{
+    string? IpAddress { get; }
+
+    string? UserAgent { get; }
+}
+
+/// <summary>Write side of <see cref="IRequestMetadata"/>, set by API middleware.</summary>
+public interface IMutableRequestMetadata : IRequestMetadata
+{
+    void Set(string? ipAddress, string? userAgent);
+}

@@ -80,6 +80,11 @@ public sealed record Error
 
     public static Error NotFound(string code, string message) => new(code, message, ErrorType.NotFound);
 
+    public static Error Unauthenticated(
+        string code = "identity.not_authenticated",
+        string message = "Sign in to continue.") =>
+        new(code, message, ErrorType.Unauthenticated);
+
     public static Error Forbidden(string code, string message) => new(code, message, ErrorType.Forbidden);
 
     public static Error Conflict(string code, string message) => new(code, message, ErrorType.Conflict);

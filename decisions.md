@@ -33,6 +33,9 @@ Status values: `Accepted` · `Proposed` · `Superseded` · `Deprecated`.
 | [0024](#adr-0024) | Non-clustered GUID keys with purpose-chosen clustered indexes | Accepted | 2026-10-11 |
 | [0025](#adr-0025) | The idempotency decorator owns its transaction | Accepted | 2026-10-11 |
 | [0026](#adr-0026) | Asynchronous saves only, and a fail-closed tenant filter | Accepted | 2026-10-11 |
+| [0027](#adr-0027) | Token model: scope in the token, permissions from the database | Accepted | 2026-10-11 |
+| [0028](#adr-0028) | Cryptographic choices for passwords, TOTP and secrets at rest | Accepted | 2026-10-11 |
+| [0029](#adr-0029) | What invalidates a session, and what deliberately does not | Accepted | 2026-10-11 |
 
 ---
 
@@ -616,3 +619,93 @@ leaves neither the business row nor the reservation behind.
 rows, exactly as a request does. A write without context raises `MissingTenantContextException`, and
 a write whose row belongs to another tenant raises `TenantMismatchException`; both map to 403 with no
 information about the other tenant.
+
+---
+
+## Phase 3 — Identity and authorization
+
+### ADR-0027
+**Token model: scope in the token, permissions from the database** · Accepted · 2026-10-11
+
+*Context.* A cashier can hold over sixty permission codes and an owner over a hundred. Inlining
+them as claims would produce large tokens on every POS request and, worse, would mean a permission
+revoked by a manager keeps working until the token expires.
+
+*Decision.*
+
+- An access token carries **identity and scope only**: `sub`, `org`, `sid` (session), `stamp`
+  (security stamp), `pv` (permission-set version), optional `branch`, `terminal`, `device`, and role
+  names for display. Default lifetime 10 minutes, HS256 in development.
+- **Permissions are resolved server-side on every authorized request** from roles plus per-branch
+  overrides, cached by `(userId, permissionsVersion)`. A client that edits its own token gains
+  nothing, and a revocation takes effect on the next request.
+- **Sign-in requires the organization code** alongside email and password. An address can exist in
+  more than one tenant; guessing which one is wrong, and answering "which organizations is this
+  address in?" to an unauthenticated caller leaks customer relationships. The app stores the code
+  after first setup, so a cashier types it once.
+- **`X-Branch-Id` selects the branch per request**, and is validated against the user's grants in
+  middleware. A branch grant removed after the token was issued stops working immediately, because
+  the check reads current state rather than the token.
+- The **security stamp in the token is compared with current state** on every request, through a
+  30-second cache. That is the window in which a revoked session can still act; it is the price of
+  not reading the user row on every call, and it is far shorter than the token lifetime.
+- **Rate limiting is layered**: a global per-address budget plus a tighter policy on `/auth/*`. An
+  endpoint can only carry one rate-limit policy, and the last one applied wins — so the broad limit
+  is global and the endpoint policy tightens it rather than replacing it. (Found by test: a
+  `RequireRateLimiting` on `MapControllers` silently overrode the stricter auth policy, and
+  `UseRateLimiter` must come after `UseRouting` or endpoint policies are ignored entirely.)
+
+*Consequences.* One database read per authorized request in the worst case, none in the common
+cached case. Permission changes are immediate; credential changes take effect within 30 seconds.
+RS256 and key rotation are deferred to the deployment phase, and the token service refuses to start
+with any other algorithm configured rather than quietly signing with a shared secret.
+
+---
+
+### ADR-0028
+**Cryptographic choices for passwords, TOTP and secrets at rest** · Accepted · 2026-10-11
+
+*Decision.*
+
+| Concern | Choice | Why |
+|---|---|---|
+| Passwords | PBKDF2-HMAC-SHA512, 210 000 iterations, 128-bit salt, format `v1.{iterations}.{salt}.{hash}` | No native dependency; the self-describing format is what allows the iteration count to be raised later, with the sign-in path re-hashing a weaker stored hash while it has the plaintext |
+| Password floor | iterations clamped to ≥ 100 000 at construction | A mis-set configuration value must not quietly weaken every password in the database |
+| Refresh tokens, device secrets, reset tokens | 256 bits of CSPRNG randomness, stored as SHA-256, compared by hash | High-entropy values need a fast digest, not a slow one; there is nothing to brute-force, and lookup by hash happens on every refresh |
+| TOTP | RFC 6238, HMAC-SHA1, 30-second step, 6 digits, ±1 step drift, implemented directly | What authenticator apps actually implement; the algorithm is small and verifiable against the RFC's published vectors, which the tests do. SHA-256 TOTP would be stronger on paper and unusable in practice |
+| TOTP replay | the accepted time step is stored, and a code from that step or earlier is refused | A code seen over the shoulder or recovered from a log cannot be used inside its own window |
+| MFA secrets at rest | AES-GCM with a key from `appsettings`, random nonce per value | Readable by the application, not by someone holding a database backup; the tag makes tampering fail loudly |
+| Password comparison | `CryptographicOperations.FixedTimeEquals` | A short-circuiting compare leaks how much of a hash matched |
+
+*Consequences.* Argon2id remains the preferred end state and is a registration change plus
+rehash-on-login behind `IPasswordHasher`; it is tracked as a hardening item. Rotating
+`Security:SecretProtectionKey` makes existing MFA secrets unreadable, which the production example
+file states plainly — those users must re-enrol.
+
+---
+
+### ADR-0029
+**What invalidates a session, and what deliberately does not** · Accepted · 2026-10-11
+
+*Context.* Rotating a user's security stamp invalidates every access token they hold within the
+30-second validation window. Applying that too eagerly turns ordinary administration into a
+surprise sign-out at a till mid-transaction; too rarely, and a compromised credential keeps working.
+
+*Decision.*
+
+| Event | Sessions ended | Stamp rotated | Reasoning |
+|---|---|---|---|
+| Password change by the user | no | yes | The credential changed, so old tokens must die; but the person at the till keeps working in the session they are using |
+| Password reset by token | **yes** | yes | A reset usually follows a suspected compromise, so leaving an attacker's session alive would defeat it |
+| Sign out everywhere | yes | yes | That is what was asked for |
+| Account deactivated | — | yes | Access must stop within seconds, not at token expiry |
+| Refresh-token reuse detected | yes (whole family) | no | The family is burned; the account itself is not suspect |
+| Branch grant removed | no | no | The branch check reads current state on every request, so removal is already immediate |
+| MFA enabled or disabled | no | no | The credential has not changed. Signing someone out of the session they just used to enrol is a confusing reward for improving their security — and disabling requires the password, so intent is already proven. (Found by test: enrolment returned 403 on the very next call.) |
+
+*Also decided.* A lockout is reported plainly as `identity.account_locked` rather than hidden behind
+`identity.invalid_credentials`, even though it reveals that an account exists. A cashier at a till
+needs to know whether to wait or call a manager, and the alternative — a correct password that
+silently fails — produces support calls and shoulder-surfed retries. Unknown accounts and unknown
+organization codes still both answer `identity.invalid_credentials`, so the endpoint cannot be used
+to enumerate either.

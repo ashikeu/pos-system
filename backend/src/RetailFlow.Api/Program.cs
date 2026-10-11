@@ -12,6 +12,7 @@ using RetailFlow.Api.Configuration;
 using RetailFlow.Api.Middleware;
 using RetailFlow.Application;
 using RetailFlow.Infrastructure;
+using RetailFlow.Infrastructure.Identity.Persistence;
 using RetailFlow.Infrastructure.Platform.Persistence;
 using Serilog;
 using Serilog.Events;
@@ -73,7 +74,10 @@ public class Program
 
         builder.Services
             .AddApplication()
-            .AddInfrastructure(builder.Configuration);
+            .AddInfrastructure(builder.Configuration)
+            .AddIdentityUseCases()
+            .AddRetailFlowAuthentication(builder.Configuration)
+            .AddRetailFlowRateLimiting(builder.Configuration);
 
         builder.Services.AddControllers()
             .AddJsonOptions(options =>
@@ -127,12 +131,17 @@ public class Program
         builder.Services.AddProblemDetails();
 
         builder.Services.AddEndpointsApiExplorer();
-        builder.Services.AddSwaggerGen(options => options.SwaggerDoc("v1", new OpenApiInfo
+        builder.Services.AddSwaggerGen(options =>
         {
-            Title = "RetailFlow POS API",
-            Version = "v1",
-            Description = "Multi-tenant point of sale and retail management platform.",
-        }));
+            options.SwaggerDoc("v1", new OpenApiInfo
+            {
+                Title = "RetailFlow POS API",
+                Version = "v1",
+                Description = "Multi-tenant point of sale and retail management platform.",
+            });
+
+            AuthenticationSetup.AddBearerSecurity(options);
+        });
 
         builder.Services.AddHealthChecks()
             .AddCheck<DatabaseReadinessCheck>(
@@ -154,6 +163,18 @@ public class Program
         // problem+json shape as business failures, so a client has one error format to parse.
         app.UseStatusCodePages();
         app.UseMiddleware<CorrelationIdMiddleware>();
+
+        // Routing first: the rate limiter reads the endpoint's policy from its metadata, so a
+        // per-endpoint limit is silently ignored when it runs before routing has matched.
+        app.UseRouting();
+        app.UseRateLimiter();
+
+        app.UseAuthentication();
+
+        // Between authentication and authorization on purpose: the policy handler resolves
+        // permissions for the tenant and branch this middleware establishes (ADR-0027).
+        app.UseMiddleware<AuthenticationContextMiddleware>();
+        app.UseAuthorization();
 
         if (app.Environment.IsDevelopment())
         {
@@ -193,6 +214,13 @@ public class Program
         using var scope = app.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<RetailFlowDbContext>();
         context.Database.Migrate();
+
+        // The permission catalog is part of the application, so it is synced on every start-up
+        // rather than seeded once (ADR-0013).
+        scope.ServiceProvider.GetRequiredService<PermissionCatalogSeeder>()
+            .SyncAsync()
+            .GetAwaiter()
+            .GetResult();
 
         if (options.SeedDevelopmentData)
         {

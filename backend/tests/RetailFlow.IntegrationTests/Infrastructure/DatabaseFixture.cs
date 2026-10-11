@@ -42,6 +42,11 @@ public sealed class DatabaseFixture : IAsyncLifetime
                 ["Outbox:BaseBackoffSeconds"] = "5",
                 ["Outbox:MaxBackoffSeconds"] = "60",
                 ["Outbox:JitterFactor"] = "0",
+                ["Jwt:Issuer"] = "https://localhost/test",
+                ["Jwt:Audience"] = "retailflow-tests",
+                ["Jwt:SigningKey"] = "integration-test-signing-key-at-least-32-characters",
+                ["Security:PasswordIterations"] = "100000",
+                ["Security:SecretProtectionKey"] = "cmV0YWlsZmxvdy1kZXYtc2VjcmV0LXByb3RlY3QzMiE=",
             })
             .Build();
 
