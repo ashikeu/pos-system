@@ -158,7 +158,9 @@ public sealed class LoginHandler : IUseCase<LoginRequest, AuthenticationResponse
             return IdentityErrors.InvalidCredentials();
         }
 
-        if (!organization.IsActive)
+        // Suspended is deliberately not refused here: that tenant gets a read-only surface, which
+        // the write gate enforces per request (ADR-0030). Closed is refused outright.
+        if (!organization.CanSignIn)
         {
             await RecordAttemptAsync(
                 request,

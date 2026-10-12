@@ -1,4 +1,5 @@
 using RetailFlow.Domain.Identity;
+using RetailFlow.Domain.Tenancy;
 
 namespace RetailFlow.Application.Identity.Abstractions;
 
@@ -6,8 +7,23 @@ namespace RetailFlow.Application.Identity.Abstractions;
 /// <param name="OrganizationId">The tenant.</param>
 /// <param name="Code">Its code.</param>
 /// <param name="Name">Its display name.</param>
-/// <param name="IsActive">False when suspended or closed: sign-in is refused (FR-TEN-06).</param>
-public sealed record OrganizationLookup(Guid OrganizationId, string Code, string Name, bool IsActive);
+/// <param name="Status">Lifecycle state of the tenant.</param>
+public sealed record OrganizationLookup(
+    Guid OrganizationId,
+    string Code,
+    string Name,
+    OrganizationStatus Status)
+{
+    /// <summary>Trading normally. A suspended tenant is reachable but read-only.</summary>
+    public bool IsActive => Status == OrganizationStatus.Active;
+
+    /// <summary>
+    /// Whether an account in this tenant may still authenticate. A suspended tenant may: it gets a
+    /// read-only surface so the shop can look at its data and renew, and the write gate is applied
+    /// per request rather than at the door (FR-TEN-06, ADR-0030). A closed tenant may not.
+    /// </summary>
+    public bool CanSignIn => Status != OrganizationStatus.Closed;
+}
 
 /// <summary>A branch a user may act in.</summary>
 /// <param name="BranchId">Branch identifier.</param>

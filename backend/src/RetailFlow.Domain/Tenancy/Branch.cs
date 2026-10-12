@@ -5,7 +5,7 @@ namespace RetailFlow.Domain.Tenancy;
 /// <summary>
 /// A trading location. Branches own warehouses and POS terminals, scope user access, and define
 /// the time zone and business-day start used to date their transactions (FR-TEN-01, ADR-0007).
-/// Phase 4 adds branch settings, warehouses and terminals.
+/// Overrides for that location live in <see cref="BranchSettings"/>.
 /// </summary>
 public sealed class Branch : TenantEntity
 {

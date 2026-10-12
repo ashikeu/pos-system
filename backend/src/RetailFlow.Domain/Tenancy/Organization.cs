@@ -17,8 +17,9 @@ public enum OrganizationStatus
 
 /// <summary>
 /// A tenant. Its <see cref="Entity.Id"/> is the organization id carried by every tenant-owned
-/// record, so this aggregate is the root of the isolation model (ADR-0004). Phase 4 adds settings,
-/// subscriptions and provisioning; this is the minimum the platform needs to scope data.
+/// record, so this aggregate is the root of the isolation model (ADR-0004). Its configuration lives
+/// in <see cref="OrganizationSettings"/> and its plan in <see cref="OrganizationSubscription"/>,
+/// both created by provisioning.
 /// </summary>
 public sealed class Organization : AuditableAggregateRoot
 {
@@ -63,6 +64,18 @@ public sealed class Organization : AuditableAggregateRoot
     /// <summary>Default UI language, <c>en</c> or <c>bn</c> (FR-LOC-02).</summary>
     public string DefaultLanguage { get; private set; } = "en";
 
+    public string? NameBn { get; private set; }
+
+    /// <summary>Head-office address, printed on VAT documents.</summary>
+    public string? AddressLine { get; private set; }
+
+    public string? City { get; private set; }
+
+    public string? PhoneNumber { get; private set; }
+
+    /// <summary>Billing and notification address for the account owner.</summary>
+    public string? ContactEmail { get; private set; }
+
     public OrganizationStatus Status { get; private set; }
 
     public DateTimeOffset? SuspendedAtUtc { get; private set; }
@@ -103,6 +116,45 @@ public sealed class Organization : AuditableAggregateRoot
 
     public void Rename(string name) => Name = Normalize(name, nameof(name), 200);
 
+    /// <summary>Updates the details that appear on documents and in the admin screens.</summary>
+    public void UpdateProfile(
+        string name,
+        string? nameBn,
+        string? addressLine,
+        string? city,
+        string? phoneNumber,
+        string? contactEmail)
+    {
+        Name = Normalize(name, nameof(name), 200);
+        NameBn = Optional(nameBn, 200);
+        AddressLine = Optional(addressLine, 500);
+        City = Optional(city, 100);
+        PhoneNumber = Optional(phoneNumber, 32);
+        ContactEmail = Optional(contactEmail, 256)?.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Changes the tenant's time zone and default language. The currency is deliberately not
+    /// changeable: every stored amount is in it, and re-denominating historical money is not a
+    /// settings change (assumption A-01).
+    /// </summary>
+    public void SetLocalization(string timeZoneId, string defaultLanguage)
+    {
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            throw new ArgumentException("Time zone is required.", nameof(timeZoneId));
+        }
+
+        var language = (defaultLanguage ?? string.Empty).Trim().ToLowerInvariant();
+        if (language is not ("en" or "bn"))
+        {
+            throw new ArgumentException("Supported languages are 'en' and 'bn'.", nameof(defaultLanguage));
+        }
+
+        TimeZoneId = timeZoneId.Trim();
+        DefaultLanguage = language;
+    }
+
     public void SetLegalIdentity(string? legalName, string? binNumber)
     {
         LegalName = string.IsNullOrWhiteSpace(legalName) ? null : legalName.Trim();
@@ -119,9 +171,11 @@ public sealed class Organization : AuditableAggregateRoot
         Status = OrganizationStatus.Suspended;
         SuspendedAtUtc = atUtc;
         SuspendedReason = Normalize(reason, nameof(reason), 500);
+
+        Raise(new OrganizationSuspended(Guid.Empty, atUtc, Id, Code, SuspendedReason));
     }
 
-    public void Reactivate()
+    public void Reactivate(DateTimeOffset atUtc)
     {
         if (Status == OrganizationStatus.Closed)
         {
@@ -131,6 +185,8 @@ public sealed class Organization : AuditableAggregateRoot
         Status = OrganizationStatus.Active;
         SuspendedAtUtc = null;
         SuspendedReason = null;
+
+        Raise(new OrganizationReactivated(Guid.Empty, atUtc, Id, Code));
     }
 
     public void Close(DateTimeOffset atUtc, string reason)
@@ -138,6 +194,19 @@ public sealed class Organization : AuditableAggregateRoot
         Status = OrganizationStatus.Closed;
         SuspendedAtUtc = atUtc;
         SuspendedReason = Normalize(reason, nameof(reason), 500);
+
+        Raise(new OrganizationClosed(Guid.Empty, atUtc, Id, Code, SuspendedReason));
+    }
+
+    private static string? Optional(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length > maxLength ? trimmed[..maxLength] : trimmed;
     }
 
     private static string Normalize(string value, string parameterName, int maxLength)

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using RetailFlow.Api.Configuration;
 using RetailFlow.Application;
 using RetailFlow.Application.Platform.Abstractions;
 using RetailFlow.Domain.Tenancy;
@@ -54,6 +55,10 @@ public sealed class DatabaseFixture : IAsyncLifetime
         services.AddLogging(builder => builder.SetMinimumLevel(LogLevel.Warning));
         services.AddApplication();
         services.AddInfrastructure(configuration);
+
+        // The tenancy use cases are registered by the API composition root, and the tests that
+        // drive them directly need the same pipeline — decorators included — that HTTP callers get.
+        services.AddTenancyUseCases();
         TestUseCases.Register(services);
 
         _provider = services.BuildServiceProvider(validateScopes: true);

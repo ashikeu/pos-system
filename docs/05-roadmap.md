@@ -52,7 +52,7 @@ Parallelisable once Phase 5 is done: 7 (procurement) and 8 (customers/loyalty) a
 | 1 Foundation | Docs, ADRs, checklist exist; solution builds; toolchain and DB target confirmed |
 | 2 Platform | Migration applied to localhost SQL Server; tenancy filter, audit, outbox, idempotency proven by integration tests; health endpoints and ProblemDetails live; dev seed loads |
 | 3 Identity | Login/refresh/logout work end to end; refresh reuse revokes the family; permission + branch checks enforced; lockout and rate limits tested; cross-tenant access test red→green |
-| 4 Tenancy | Org provisioning creates a working branch/warehouse/terminal/roles/admin; settings precedence and plan limits tested |
+| 4 Tenancy | **Met 2026-10-12.** Provisioning creates a working branch/warehouse/terminal/roles/owner in one transaction and the owner signs in; settings precedence, plan limits and the read-only gate for a suspended or lapsed tenant tested |
 | 5 Catalog | Product/variant/barcode CRUD, price resolution and tax engine tested against the formulas in `02-business-rules.md`; CSV import with a validation report |
 | 6 Inventory | All movement types post; balances match a ledger re-sum; concurrent last-unit test proves no oversell; transfers and counts complete with approvals |
 | 7 Procurement | PO → GRN → invoice → payment path tested including partial receipt, three-way match and landed cost into average cost |
@@ -96,13 +96,21 @@ with real users:
 | Report queries slow on large tenants | Medium | Medium | Projections, keyset pagination, index plan, measured in Phase 17 |
 | Scope creep into accounting/e-commerce | Medium | Medium | Explicit out-of-scope list in `01-requirements.md` §1 |
 
-## 6. Phase 2 entry checklist (next session)
+## 6. Phase 5 entry checklist (next session)
 
-1. `cd backend && dotnet tool restore && dotnet build` — expect success.
-2. Create `Platform` primitives in Domain (`Entity`, `Money`, `Result`, tenancy interfaces).
-3. Add `RetailFlowDbContext` with conventions and interceptors, no entities yet beyond Platform.
-4. First migration + apply to `Server=localhost;Database=RetailFlow` (LocalDB if the default
-   instance is unavailable).
-5. Wire ProblemDetails, correlation id, Serilog, health checks, Swagger, API versioning.
-6. Integration-test harness with the LocalDB/Testcontainers switch, plus the first four tests:
-   tenant filter, tenant mismatch rejection, idempotency replay, outbox retry.
+Phases 1–4 are complete: the platform, identity and tenancy foundations are in place, so the
+catalog has a tenant, a branch, a warehouse and a terminal to hang from.
+
+1. `cd backend && dotnet build && dotnet test` — expect green (see `tasks.md` for the current count).
+2. Catalog entities in Domain: `Category`, `Brand`, `UnitOfMeasure`, `UomConversion`, `Product`,
+   `ProductVariant`, `Barcode` — variant/SKU/barcode rules first, archival instead of delete.
+3. Pricing and tax: `TaxClass`, `TaxRule`, `TaxRuleVersion`, `PriceList`, `PriceListItem`,
+   `BranchPriceOverride`, `DiscountRule`, with the price-resolution service and the tax engine
+   written against the formulas in `02-business-rules.md` §1–2 (A-02 is still an open question, so
+   the engine stays configurable and nothing is hard-coded).
+4. Settings already resolve through the chain, so the catalog reads `PriceIncludesTax` and
+   `MaxLineDiscountPercent` from `IEffectiveSettingsProvider` rather than inventing its own.
+5. Wire the `Products` plan limit into `IPlanLimitGuard` — the feature code exists and is reported
+   as uncounted until the catalog can count it.
+6. Tests: price resolution precedence, inclusive/exclusive tax math, SD stacking, rounding, barcode
+   uniqueness per tenant, CSV import validation report.

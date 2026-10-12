@@ -105,8 +105,9 @@ dotnet ef database update          -p src/RetailFlow.Infrastructure -s src/Retai
 dotnet ef migrations script        -p src/RetailFlow.Infrastructure -s src/RetailFlow.Api -i -o ../artifacts/migrate.sql
 
 dotnet run --project src/RetailFlow.Api    # http://localhost:5274, Swagger UI at /swagger
-#   Development applies migrations, syncs the permission catalog and seeds the demo tenant:
-#   organization DEMO (0193f000-...-0001), branch MAIN (...-0002), owner (...-0003).
+#   Development applies migrations, syncs the permission catalog and the subscription plans, and
+#   seeds the demo tenant: organization DEMO (0193f000-...-0001), branch MAIN (...-0002),
+#   owner (...-0003), warehouse MAIN (...-0004), terminal POS1 (...-0005), on the STANDARD plan.
 #   Sign in with organizationCode DEMO, email owner@demo.retailflow.local and the
 #   development password in IdentitySeeder.
 ```

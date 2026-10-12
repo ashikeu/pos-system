@@ -29,6 +29,20 @@ public sealed class RetailFlowDbContext : DbContext
 
     public DbSet<Branch> Branches => Set<Branch>();
 
+    public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+
+    public DbSet<PosTerminal> PosTerminals => Set<PosTerminal>();
+
+    public DbSet<OrganizationSettings> OrganizationSettings => Set<OrganizationSettings>();
+
+    public DbSet<BranchSettings> BranchSettings => Set<BranchSettings>();
+
+    public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
+
+    public DbSet<PlanFeature> PlanFeatures => Set<PlanFeature>();
+
+    public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
     public DbSet<User> Users => Set<User>();
 
     public DbSet<Role> Roles => Set<Role>();

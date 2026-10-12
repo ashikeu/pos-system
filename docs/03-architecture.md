@@ -134,6 +134,7 @@ sequenceDiagram
 
   C->>M: HTTP + JWT + X-Branch-Id + Idempotency-Key
   M->>M: correlation id · request log · rate limit · exception→ProblemDetails
+  M->>M: tenant + branch scope · authorization · tenant write gate
   M->>Ctl: authenticated principal
   Ctl->>Ctl: [HasPermission] · branch-scope check · model bind
   Ctl->>D: request DTO
@@ -147,6 +148,14 @@ sequenceDiagram
   D-->>Ctl: Result<T>
   Ctl-->>C: 200/201 + DTO, or ProblemDetails
 ```
+
+Middleware order matters in two places that cost a day each to find. `UseRouting` comes before
+`UseRateLimiter`, or endpoint-level limits are ignored entirely; and the tenant write gate comes
+after `UseAuthorization`, so a caller who may not perform the action at all hears that first, and a
+suspended tenant is told it is read-only rather than that it lacks a permission. The gate refuses
+`POST`/`PUT`/`PATCH`/`DELETE` for a suspended or lapsed tenant with
+`403 tenancy.organization_read_only`, lets every `GET` through, and skips endpoints marked
+`[AllowReadOnlyTenant]` — the renewal surface that lets a shop fix the situation (ADR-0030).
 
 Decorator order is fixed and explicit, outermost first: `Logging → Validation → Idempotency or
 Transaction → Handler`. Idempotency and the transaction are **one** decorator, because the stored
@@ -162,6 +171,7 @@ implements neither and gets no transaction. Audit rows are written by the handle
 | Operation | One DB transaction covers | Explicitly outside |
 |---|---|---|
 | **Any idempotent operation** | idempotency reservation + the handler's work + the stored response snapshot + outbox messages + audit rows + sync-cursor allocation (ADR-0025) | the key lookup that precedes it |
+| **Provision organization** | organization + settings + branch + branch settings + default warehouse + terminal + role templates + owner account + branch grant + subscription + audit + idempotency record (ADR-0032) | the welcome email |
 | **Create sale** | sale + lines + line taxes + discounts + stock movements + balance updates + reservations release + cash/credit payments + loyalty accrual + customer ledger + numbering allocation + outbox messages + idempotency record | provider payment calls, printing, email/SMS, report refresh |
 | **Card/MFS payment** | tx1: payment row `Pending`; tx2: outcome applied (`Completed`/`Failed`/`UnknownOutcome`) + sale state + cash/loyalty effects | the provider HTTP call between tx1 and tx2 |
 | **Provider callback** | verify + payment state transition + sale settle + outbox | nothing |

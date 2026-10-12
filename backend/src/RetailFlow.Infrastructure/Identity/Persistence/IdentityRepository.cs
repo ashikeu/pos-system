@@ -38,7 +38,7 @@ internal sealed class IdentityRepository : IIdentityRepository
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(o => o.Code == normalized)
-            .Select(o => new OrganizationLookup(o.Id, o.Code, o.Name, o.Status == OrganizationStatus.Active))
+            .Select(o => new OrganizationLookup(o.Id, o.Code, o.Name, o.Status))
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
@@ -50,7 +50,7 @@ internal sealed class IdentityRepository : IIdentityRepository
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(o => o.Id == organizationId)
-            .Select(o => new OrganizationLookup(o.Id, o.Code, o.Name, o.Status == OrganizationStatus.Active))
+            .Select(o => new OrganizationLookup(o.Id, o.Code, o.Name, o.Status))
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 

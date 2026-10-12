@@ -101,7 +101,7 @@ public sealed class RefreshTokenHandler : IUseCase<RefreshRequest, Authenticatio
             .FindOrganizationByIdAsync(token.OrganizationId, cancellationToken)
             .ConfigureAwait(false);
 
-        if (organization is null || !organization.IsActive)
+        if (organization is null || !organization.CanSignIn)
         {
             return IdentityErrors.OrganizationUnavailable();
         }

@@ -268,6 +268,10 @@ Variance     = CountedCash - ExpectedCash          # negative = short, positive 
 | A-10 | Scanners act as keyboard HID devices | Alternative SDK adapters needed for serial/Bluetooth scales & scanners | Engineering |
 | A-11 | Pilot scale: ≤ 20 branches, ≤ 100 terminals, ≤ 200 000 variants, ≤ 50 000 sales/day per tenant | Sizing, indexing, partitioning plans | Engineering |
 | A-12 | NBR does not require real-time fiscal device reporting for the pilot customers' category | A fiscal/EFD integration module would be needed | Finance |
+| A-13 | A lapsed subscription keeps writing for a 7-day grace period (`Tenancy:GraceDays`) before the tenant becomes read-only | A shop that cannot ring up sales stops trading, so the window is commercial, not technical | Product |
+| A-14 | A branch may override the trading settings but not `InvoiceNumberFormat`; numbering stays organization-wide | Document numbers stay comparable across branches; per-branch formats would need a migration to allow | Product |
+| A-15 | A tenant must keep at least one active branch, and a branch's default warehouse may not be deactivated | Both are states that make the POS unusable while looking like ordinary administration | Product |
+| A-16 | A tenant with no subscription row is unrestricted, and a plan limit whose counter is not implemented yet is reported rather than enforced | Fails open on missing information instead of blocking a paying customer; provisioning always writes a subscription (ADR-0030) | Engineering |
 
 ## 13. Open questions (asked, not assumed)
 

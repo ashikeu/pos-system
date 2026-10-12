@@ -5,7 +5,7 @@ Single source of truth for status. Update it in the same change that moves the w
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done (built + tested) · `[!]` blocked ·
 `[-]` deferred (with reason)
 
-Last updated: **2026-10-11** · Current phase: **Phase 3 (complete) → Phase 4 next**
+Last updated: **2026-10-12** · Current phase: **Phase 4 (complete) → Phase 5 next**
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: **2026-10-11** · Current phase: **Phase 3 (complete) → Phase 4 
 | 1 | Foundation: requirements, decisions, structure, schema design, roadmap | `[x]` |
 | 2 | Platform foundations: EF Core, tenancy, audit, outbox, idempotency, migrations, seed | `[x]` |
 | 3 | Identity & authorization | `[x]` |
-| 4 | Tenancy management (organizations, branches, warehouses, terminals, settings) | `[ ]` |
+| 4 | Tenancy management (organizations, branches, warehouses, terminals, settings) | `[x]` |
 | 5 | Catalog, pricing & tax configuration | `[ ]` |
 | 6 | Inventory core (ledger, balances, adjustments, counts, transfers) | `[ ]` |
 | 7 | Procurement (suppliers, PO, GRN, invoices, returns, payments, landed cost) | `[ ]` |
@@ -173,18 +173,76 @@ Blocked / waiting on externals:
 - [-] Platform-operator cross-tenant endpoints: `IsPlatformOperator` and the permission codes exist;
       the endpoints that use them arrive with the admin surface.
 
-## Phase 4 — Tenancy management `[ ]`
+## Phase 4 — Tenancy management `[x]`
 
 Entry state: authentication, authorization and branch scoping work end to end, so provisioning can
 create an organization with roles, an owner and a terminal that can sign in immediately.
 
-- [ ] Entities: `Organization`, `Branch`, `Warehouse`, `PosTerminal`, `OrganizationSettings`,
-      `BranchSettings`, `SubscriptionPlan`, `OrganizationSubscription`, `FeatureLimit`
-- [ ] Organization provisioning (owner user, default branch/warehouse/terminal, role templates)
-- [ ] Branch/warehouse/terminal CRUD with activation state and terminal registration
-- [ ] Settings resolution chain: terminal → branch → organization → platform default
-- [ ] Subscription plan limits enforced (branches, terminals, users, products) + tenant suspension
-- [ ] Tests: settings resolution precedence, limit enforcement, suspended-tenant lockout
+- [x] Entities: `Warehouse`, `PosTerminal`, `OrganizationSettings`, `BranchSettings`,
+      `SubscriptionPlan`, `PlanFeature` (the schema doc's name for `FeatureLimit`),
+      `OrganizationSubscription`, plus profile and lifecycle additions to `Organization`, with the
+      `TenancySchema` migration created and applied to `localhost\RetailFlow`
+- [x] Organization provisioning in one transaction: organization, settings, branch, branch
+      settings, default warehouse, terminal, the six role templates, an owner account
+      (`MustChangePassword`) and a subscription — idempotent by key, operator-only (ADR-0032)
+- [x] Branch CRUD with activation, a default warehouse created with the branch, and a refusal to
+      deactivate the last active branch
+- [x] Warehouse CRUD: types (Main/Sales/Damage/Transit), one default per branch enforced by a
+      filtered unique index, damage/transit may not be the default, the default may not be
+      deactivated
+- [x] Terminal CRUD plus registration, which issues a device secret once and records the client
+      version; a terminal may only point at a warehouse in its own branch
+- [x] Settings resolution chain terminal → branch → organization → platform default, as nullable
+      overrides over defaults bound from `Tenancy:Defaults` (ADR-0031), cached per scope under a
+      per-tenant generation counter that every settings change bumps
+- [x] Subscription plans seeded on start-up (FREE, STARTER, STANDARD, ENTERPRISE) with per-feature
+      limits; `IPlanLimitGuard` enforces them inside the creating transaction, and a plan change
+      that current usage would already breach is refused with the limit named
+- [x] Suspended and lapsed tenants are read-only rather than locked out: `TenantWriteGateMiddleware`
+      refuses writes with `tenancy.organization_read_only` while reads and the renewal endpoints
+      keep working; closed tenants cannot sign in at all (ADR-0030)
+- [x] Platform-operator surface: provision, suspend, reactivate, renew — all behind
+      `platform.tenants.manage` and all audited
+- [x] Dev seed extended so the demo tenant has settings, a default warehouse, a terminal and a
+      subscription — the same shape a provisioned tenant has
+- [x] Tests (278 total, all executed: 119 domain + 21 application + 138 integration): 31 new domain
+      (settings precedence and guards, warehouse and terminal invariants, organization lifecycle and
+      events, subscription grace/expiry/renewal, plan features), 29 new tenancy integration plus one
+      new identity test for a closed organization (provisioning end to end including the new owner signing
+      in and reading its own organization, idempotent replay, duplicate code, weak password,
+      unknown plan, settings precedence over a real database, terminal/branch warehouse mismatch,
+      plan limits on branches and warehouses, downgrade refusal, suspended read-only, lapsed
+      subscription and renewal, operator suspend/reactivate, cross-tenant 404, cashier 403,
+      terminal registration replay, last-active-branch refusal)
+
+### Three things the tests and the running API corrected
+
+- A settings update returned the **old** effective values: the provider reads the database, and the
+  pipeline's `SaveChanges` runs after the handler. The settings handlers now flush inside the
+  transaction before re-resolving.
+- Phase 3 refused sign-in for any non-active organization, which contradicts FR-TEN-06. Suspension
+  is now a per-request write gate; only `Closed` refuses sign-in (ADR-0030).
+- `Tenancy:Defaults:ReceiptFooterText` came back as `""` rather than null, because a configuration
+  provider turns a JSON null into an empty string — every receipt would have printed a blank
+  footer line. Blank is now treated as "not set".
+
+### Deferred out of Phase 4, with reasons
+
+- [-] A `Products` plan limit is defined and reported but not enforced: there is no catalog to count
+      until Phase 5. The guard reports `isCounted: false` rather than counting zero, so an
+      unimplemented counter can never be mistaken for an empty tenant.
+- [-] Platform-operator bootstrap (creating the first operator organization and account from
+      configuration): provisioning needs an operator, and standing one up belongs with deployment
+      in Phase 18. Locally the integration tests grant `platform.tenants.manage` through an
+      ordinary role, which is the only path that exists (ADR-0032).
+- [-] Self-service signup: deliberately not built (ADR-0032).
+- [-] Per-tenant token lifetimes and `MfaRequiredForRoles`: they stay platform-level configuration
+      until the token service can take them per tenant, rather than shipping a security knob that
+      does nothing (ADR-0031).
+- [-] A background job that flips a lapsed tenant to `Suspended`: not needed, because the status
+      provider computes the read-only state from the subscription period directly. The job becomes
+      worthwhile when it also has to notify, which is Phase 17.
+- [-] Branch-level deletion of any kind: deactivation only, so history stays intact (NFR-09).
 
 ## Phase 5 — Catalog, pricing & tax `[ ]`
 

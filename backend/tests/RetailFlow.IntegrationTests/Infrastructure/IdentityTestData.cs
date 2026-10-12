@@ -133,8 +133,15 @@ internal static class IdentityTestData
             .ConfigureAwait(false);
     }
 
-    /// <summary>Suspends a tenant, to check that sign-in is refused (FR-TEN-06).</summary>
-    public static async Task SuspendOrganizationAsync(DatabaseFixture fixture, TestTenant tenant)
+    /// <summary>Suspends a tenant: still able to sign in, but read-only (FR-TEN-06, ADR-0030).</summary>
+    public static Task SuspendOrganizationAsync(DatabaseFixture fixture, TestTenant tenant) =>
+        SetOrganizationStateAsync(fixture, tenant, suspend: true);
+
+    /// <summary>Closes a tenant: no surface at all, so sign-in is refused.</summary>
+    public static Task CloseOrganizationAsync(DatabaseFixture fixture, TestTenant tenant) =>
+        SetOrganizationStateAsync(fixture, tenant, suspend: false);
+
+    private static async Task SetOrganizationStateAsync(DatabaseFixture fixture, TestTenant tenant, bool suspend)
     {
         ArgumentNullException.ThrowIfNull(fixture);
         ArgumentNullException.ThrowIfNull(tenant);
@@ -146,7 +153,15 @@ internal static class IdentityTestData
         var organization = await context.Organizations.FindAsync([tenant.OrganizationId]).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Organization not found.");
 
-        organization.Suspend(clock.UtcNow, "integration test");
+        if (suspend)
+        {
+            organization.Suspend(clock.UtcNow, "integration test");
+        }
+        else
+        {
+            organization.Close(clock.UtcNow, "integration test");
+        }
+
         await context.SaveChangesAsync().ConfigureAwait(false);
     }
 }

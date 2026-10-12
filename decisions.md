@@ -36,6 +36,9 @@ Status values: `Accepted` · `Proposed` · `Superseded` · `Deprecated`.
 | [0027](#adr-0027) | Token model: scope in the token, permissions from the database | Accepted | 2026-10-11 |
 | [0028](#adr-0028) | Cryptographic choices for passwords, TOTP and secrets at rest | Accepted | 2026-10-11 |
 | [0029](#adr-0029) | What invalidates a session, and what deliberately does not | Accepted | 2026-10-11 |
+| [0030](#adr-0030) | A suspended or lapsed tenant is read-only, not locked out | Accepted | 2026-10-12 |
+| [0031](#adr-0031) | Settings as nullable overrides over configured platform defaults | Accepted | 2026-10-12 |
+| [0032](#adr-0032) | Tenant provisioning is operator-only and idempotent | Accepted | 2026-10-12 |
 
 ---
 
@@ -709,3 +712,127 @@ needs to know whether to wait or call a manager, and the alternative — a corre
 silently fails — produces support calls and shoulder-surfed retries. Unknown accounts and unknown
 organization codes still both answer `identity.invalid_credentials`, so the endpoint cannot be used
 to enumerate either.
+
+---
+
+## Phase 4 — Tenancy management
+
+### ADR-0030
+**A suspended or lapsed tenant is read-only, not locked out** · Accepted · 2026-10-12
+
+*Context.* FR-TEN-06 says a suspended or expired tenant "can authenticate only to a read-only /
+renewal surface". Phase 3 implemented the blunt version: sign-in was refused outright for any
+organization that was not `Active`. That is wrong in both directions. A shop whose payment is late
+loses access to its own sales history and its stock figures, and — worse — loses the ability to pay,
+which is the one thing we want it to do. Meanwhile a closed organization, where refusal *is*
+correct, was treated identically to a late invoice.
+
+*Decision.*
+
+| State | Sign-in | Reads | Writes |
+|---|---|---|---|
+| Active, subscription current or inside grace | yes | yes | yes |
+| Suspended by an operator | **yes** | yes | **no** |
+| Subscription period ended, grace exhausted | **yes** | yes | **no** |
+| Closed | no | — | — |
+
+Writes are refused by `TenantWriteGateMiddleware`, which runs after authorization and rejects
+`POST`/`PUT`/`PATCH`/`DELETE` with `403 tenancy.organization_read_only`. Endpoints that are part of
+the way out — change plan, operator suspend/reactivate/renew — carry `[AllowReadOnlyTenant]`.
+`GET` is never gated. The gate reads `ITenantStatusProvider`, which caches the answer for
+`Tenancy:StatusCacheSeconds` (30 by default), so a suspension takes effect in seconds without
+putting a query on the path of every request.
+
+*Why a gate rather than a sign-in refusal.* The decision is about money, not credentials: nothing
+has been compromised, so revoking sessions would only punish the shop. Keeping authentication alive
+also keeps the audit trail intact — we can see who looked at what while the account was in arrears.
+
+*Consequences.* Sessions are deliberately not ended on suspension (consistent with ADR-0029:
+suspension changes no credential). One Phase 3 test changed meaning and now asserts that a
+suspended tenant signs in successfully, with a new test covering the closed case. A write attempted
+in the same second a tenant is suspended may still succeed, bounded by the status cache window;
+that is accepted, because the alternative is a database read on every single request.
+
+A tenant with no subscription row at all is treated as unrestricted. Provisioning always creates
+one, so in production the only rows without a subscription are ones created directly in a test; the
+alternative — failing closed — would make every fixture tenant read-only for the wrong reason.
+
+---
+
+### ADR-0031
+**Settings as nullable overrides over configured platform defaults** · Accepted · 2026-10-12
+
+*Context.* FR-TEN-04 requires configuration to resolve terminal → branch → organization → platform
+default. The obvious implementation copies the platform defaults into each new organization's
+settings row. That freezes them: a default improved later never reaches an existing tenant, and
+there is no way to tell "the shop chose 7 days" from "nobody ever touched it".
+
+*Decision.* Every level above the platform stores `null` for "inherit", and only the platform level
+is complete. `PlatformSettingsDefaults` is bound from `Tenancy:Defaults` in appsettings (ADR-0023),
+so moving the floor is a configuration change, not a migration. `SettingsResolution.Resolve` is a
+pure function of (defaults, organization, branch, terminal) — the precedence rule is the part most
+likely to be got wrong, so it is unit-testable without a database.
+
+Each level may override a documented subset, enforced by the type rather than by convention:
+
+| Level | May set |
+|---|---|
+| Platform (`appsettings`) | everything |
+| Organization | everything the platform sets |
+| Branch | the trading settings that genuinely differ per location — **not** `InvoiceNumberFormat`, so document numbers stay comparable across a tenant |
+| Terminal | `ReceiptTemplate58`, `ReceiptTemplate80`, `DefaultWarehouseId` |
+
+A settings write **replaces** the whole override set for that level, so sending `null` is how a
+client clears an override; a merge would make clearing inexpressible.
+
+*Two deviations from `docs/04-database-schema.md`, both deliberate:*
+
+- **No `CostingMethod` column.** ADR-0009 fixes moving weighted average platform-wide. A column
+  with one legal value is a knob that does nothing, and the first thing a reader would do is try to
+  change it.
+- **`AccessTokenMinutes`, `RefreshTokenDays` and `MfaRequiredForRoles` stay platform-level.**
+  Per-tenant token lifetimes would mean threading settings through the singleton token service;
+  shipping the columns before that works would be a dead knob on a security setting, which is the
+  worst kind.
+
+*Consequences.* Resolved settings are cached per (organization, branch, terminal) under a
+per-tenant generation counter, so invalidating a tenant is one cache write rather than an
+enumeration of every scope. Every handler that changes a setting, a branch calendar, a branch
+default warehouse or a terminal flushes its change and then bumps that generation. The bump happens
+before the transaction commits, so a reader racing inside that window can cache pre-commit values
+for up to `Tenancy:SettingsCacheSeconds`; the window is sub-millisecond and the cost of closing it
+properly is a post-commit hook, which is Phase 17 work if it ever proves to matter.
+
+---
+
+### ADR-0032
+**Tenant provisioning is operator-only and idempotent** · Accepted · 2026-10-12
+
+*Decision.* `POST /api/v1/platform/organizations` creates a tenant and requires
+`platform.tenants.manage`, which no tenant role template grants. There is deliberately **no**
+anonymous self-service signup: an unauthenticated endpoint that creates organizations, users and
+password hashes is a spam and CPU-exhaustion surface (PBKDF2 is intentionally slow), and nothing in
+the product needs it yet. When self-service is wanted it will arrive with the things that make it
+safe — email verification before provisioning, a captcha or invite code, and its own rate limit.
+
+*Also decided.*
+
+- Provisioning implements `IIdempotentRequest` (ADR-0010) and answers `201` on replay with the
+  original response. It is the slowest write in the system and the one where a duplicate is worst:
+  two tenants for one customer, each with half the staff in it.
+- It runs as one transaction covering organization, settings, branch, branch settings, default
+  warehouse, terminal, role templates, owner account and subscription. A half-provisioned tenant —
+  a branch with no warehouse, or roles with no owner — is worse than no tenant.
+- It is the only handler that writes rows for an organization other than the ambient one, because
+  it is the operation that brings that organization into existence. It switches the ambient tenant
+  through `TenantScopeSwitch` and flushes inside that scope, because the save interceptor checks
+  every tenant-owned row against the ambient tenant and makes no exception for provisioning
+  (ADR-0004). Platform-operator writes to an existing tenant's rows — renewing a subscription — use
+  the same mechanism.
+- The owner account is created with `MustChangePassword`, since the operator chose that password,
+  and with an unverified email that goes through the normal verification flow.
+
+*Consequences.* A deployment needs at least one platform operator before it can provision anything.
+That bootstrap — creating the operator organization and account from configuration — is a Phase 18
+deployment concern and is listed there; locally, `Tenancy` plans are seeded on start-up and the
+integration tests grant the permission through an ordinary role, which is the only path that exists.

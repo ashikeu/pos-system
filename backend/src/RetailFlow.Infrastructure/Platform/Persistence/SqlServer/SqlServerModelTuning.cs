@@ -61,5 +61,44 @@ internal static class SqlServerModelTuning
             entity.HasKey(b => b.Id).IsClustered(false);
             entity.HasIndex(b => new { b.OrganizationId, b.Code }).IsClustered();
         });
+
+        // Warehouses and terminals are read by tenant and branch on every sale, and there are few
+        // of them, so they cluster on that access path rather than on the random key.
+        modelBuilder.Entity<Warehouse>(entity =>
+        {
+            entity.HasKey(w => w.Id).IsClustered(false);
+            entity.HasIndex(w => new { w.OrganizationId, w.Code }).IsClustered();
+        });
+
+        modelBuilder.Entity<PosTerminal>(entity =>
+        {
+            entity.HasKey(t => t.Id).IsClustered(false);
+            entity.HasIndex(t => new { t.OrganizationId, t.Code }).IsClustered();
+        });
+
+        // One settings and one subscription row per tenant: the lookup is always by that key.
+        modelBuilder.Entity<OrganizationSettings>(entity =>
+        {
+            entity.HasKey(s => s.Id).IsClustered(false);
+            entity.HasIndex(s => s.OrganizationId).IsUnique().IsClustered();
+        });
+
+        modelBuilder.Entity<BranchSettings>(entity =>
+        {
+            entity.HasKey(s => s.Id).IsClustered(false);
+            entity.HasIndex(s => new { s.OrganizationId, s.BranchId }).IsUnique().IsClustered();
+        });
+
+        modelBuilder.Entity<OrganizationSubscription>(entity =>
+        {
+            entity.HasKey(s => s.Id).IsClustered(false);
+            entity.HasIndex(s => s.OrganizationId).IsUnique().IsClustered();
+        });
+
+        modelBuilder.Entity<SubscriptionPlan>(entity =>
+        {
+            entity.HasKey(p => p.Id).IsClustered(false);
+            entity.HasIndex(p => p.Code).IsUnique().IsClustered();
+        });
     }
 }

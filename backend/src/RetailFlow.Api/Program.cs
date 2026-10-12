@@ -14,15 +14,16 @@ using RetailFlow.Application;
 using RetailFlow.Infrastructure;
 using RetailFlow.Infrastructure.Identity.Persistence;
 using RetailFlow.Infrastructure.Platform.Persistence;
+using RetailFlow.Infrastructure.Tenancy.Persistence;
 using Serilog;
 using Serilog.Events;
 
 namespace RetailFlow.Api;
 
 /// <summary>
-/// Composition root. Phase 2 wires logging, correlation, ProblemDetails, persistence, the use-case
-/// pipeline, health endpoints and OpenAPI. Authentication and authorization arrive in Phase 3; until
-/// then there are no business endpoints to protect (see ../../../tasks.md).
+/// Composition root: logging, correlation, ProblemDetails, persistence, the use-case pipeline,
+/// authentication and authorization, the tenant write gate, health endpoints and OpenAPI
+/// (see ../../../tasks.md).
 /// </summary>
 [SuppressMessage("Design", "CA1052:Static holder types should be static",
     Justification = "WebApplicationFactory in integration tests needs a non-static entry point type.")]
@@ -76,6 +77,7 @@ public class Program
             .AddApplication()
             .AddInfrastructure(builder.Configuration)
             .AddIdentityUseCases()
+            .AddTenancyUseCases()
             .AddRetailFlowAuthentication(builder.Configuration)
             .AddRetailFlowRateLimiting(builder.Configuration);
 
@@ -176,6 +178,10 @@ public class Program
         app.UseMiddleware<AuthenticationContextMiddleware>();
         app.UseAuthorization();
 
+        // After authorization, so a caller who may not do the thing at all hears that first, and
+        // a suspended tenant is told it is read-only rather than that it lacks a permission.
+        app.UseMiddleware<TenantWriteGateMiddleware>();
+
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
@@ -215,9 +221,14 @@ public class Program
         var context = scope.ServiceProvider.GetRequiredService<RetailFlowDbContext>();
         context.Database.Migrate();
 
-        // The permission catalog is part of the application, so it is synced on every start-up
-        // rather than seeded once (ADR-0013).
+        // The permission catalog and the plan catalog are part of the application, so they are
+        // synced on every start-up rather than seeded once (ADR-0013, FR-TEN-05).
         scope.ServiceProvider.GetRequiredService<PermissionCatalogSeeder>()
+            .SyncAsync()
+            .GetAwaiter()
+            .GetResult();
+
+        scope.ServiceProvider.GetRequiredService<SubscriptionPlanSeeder>()
             .SyncAsync()
             .GetAwaiter()
             .GetResult();

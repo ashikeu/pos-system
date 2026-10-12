@@ -4,12 +4,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RetailFlow.Application.Identity.Abstractions;
 using RetailFlow.Application.Platform.Abstractions;
+using RetailFlow.Application.Tenancy.Abstractions;
 using RetailFlow.Infrastructure.Identity.Persistence;
 using RetailFlow.Infrastructure.Identity.Services;
 using RetailFlow.Infrastructure.Platform.Persistence;
 using RetailFlow.Infrastructure.Platform.Persistence.Interceptors;
 using RetailFlow.Infrastructure.Platform.Persistence.SqlServer;
 using RetailFlow.Infrastructure.Platform.Services;
+using RetailFlow.Infrastructure.Tenancy.Persistence;
+using RetailFlow.Infrastructure.Tenancy.Services;
 
 namespace RetailFlow.Infrastructure;
 
@@ -71,6 +74,7 @@ public static class DependencyInjection
         services.AddPlatformServices();
         services.AddPersistence(connectionString, databaseOptions);
         services.AddIdentityServices(configuration);
+        services.AddTenancyServices(configuration);
 
         return services;
     }
@@ -142,6 +146,7 @@ public static class DependencyInjection
         services.TryAddSingleton<IEmailSender, LoggingEmailSender>();
 
         services.TryAddScoped<IIdentityRepository, IdentityRepository>();
+        services.TryAddScoped<IIdentityProvisioning, IdentityProvisioningService>();
         services.TryAddScoped<IPermissionResolver, PermissionResolver>();
         services.TryAddScoped<IUserSecurityStateProvider, UserSecurityStateProvider>();
         services.AddScoped<PermissionCatalogSeeder>();
@@ -180,6 +185,27 @@ public static class DependencyInjection
             RequireMfaForRoles = security.GetSection("RequireMfaForRoles").Get<string[]>() ?? [],
             SecretProtectionKey = security["SecretProtectionKey"] ?? defaults.SecretProtectionKey,
         };
+    }
+
+    /// <summary>
+    /// Tenancy: the configuration chain, the tenant-status gate and plan limits. The options object
+    /// carries the platform defaults that sit at the bottom of the settings chain (FR-TEN-04).
+    /// </summary>
+    private static IServiceCollection AddTenancyServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var options = configuration.GetSection(TenancyOptions.SectionName).Get<TenancyOptions>()
+            ?? new TenancyOptions();
+        services.AddSingleton(options);
+
+        services.TryAddScoped<ITenancyRepository, TenancyRepository>();
+        services.TryAddScoped<IEffectiveSettingsProvider, EffectiveSettingsProvider>();
+        services.TryAddScoped<ITenantStatusProvider, TenantStatusProvider>();
+        services.TryAddScoped<IPlanLimitGuard, PlanLimitGuard>();
+        services.AddScoped<SubscriptionPlanSeeder>();
+
+        return services;
     }
 
     private static IServiceCollection AddPersistence(

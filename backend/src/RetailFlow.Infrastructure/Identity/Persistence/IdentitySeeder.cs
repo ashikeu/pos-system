@@ -26,88 +26,36 @@ public sealed class IdentitySeeder
     public const string DemoOwnerPassword = "DemoOwner!2026";
 
     private readonly RetailFlowDbContext _context;
-    private readonly IPasswordHasher _passwordHasher;
+    private readonly IIdentityProvisioning _provisioning;
     private readonly IMutableTenantContext _tenant;
-    private readonly IClock _clock;
-    private readonly IGuidGenerator _guids;
     private readonly ILogger<IdentitySeeder> _logger;
 
     public IdentitySeeder(
         RetailFlowDbContext context,
-        IPasswordHasher passwordHasher,
+        IIdentityProvisioning provisioning,
         IMutableTenantContext tenant,
-        IClock clock,
-        IGuidGenerator guids,
         ILogger<IdentitySeeder> logger)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(passwordHasher);
+        ArgumentNullException.ThrowIfNull(provisioning);
         ArgumentNullException.ThrowIfNull(tenant);
-        ArgumentNullException.ThrowIfNull(clock);
-        ArgumentNullException.ThrowIfNull(guids);
         ArgumentNullException.ThrowIfNull(logger);
 
         _context = context;
-        _passwordHasher = passwordHasher;
+        _provisioning = provisioning;
         _tenant = tenant;
-        _clock = clock;
-        _guids = guids;
         _logger = logger;
     }
 
     /// <summary>
-    /// Copies the system role templates into an organization, adding any that are missing. Roles
-    /// are per tenant so a shop can edit them (ADR-0013); re-running this does not undo those edits,
-    /// it only fills in roles that were never created.
+    /// Copies the system role templates into an organization. Kept here as the seeding entry point;
+    /// the behaviour lives in <see cref="IIdentityProvisioning"/> so provisioning a real tenant and
+    /// seeding a development one cannot drift apart.
     /// </summary>
-    public async Task<IReadOnlyDictionary<string, Guid>> CreateSystemRolesAsync(
+    public Task<IReadOnlyDictionary<string, Guid>> CreateSystemRolesAsync(
         Guid organizationId,
-        CancellationToken cancellationToken = default)
-    {
-        var existing = await _context.Roles
-            .IgnoreQueryFilters()
-            .Where(r => r.OrganizationId == organizationId)
-            .ToDictionaryAsync(r => r.Name, StringComparer.OrdinalIgnoreCase, cancellationToken)
-            .ConfigureAwait(false);
-
-        var result = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
-        var created = 0;
-
-        foreach (var template in SystemRoles.All)
-        {
-            if (existing.TryGetValue(template.Name, out var existingRole))
-            {
-                result[template.Name] = existingRole.Id;
-                continue;
-            }
-
-            var role = Role.Create(
-                _guids.NewId(),
-                organizationId,
-                template.Name,
-                template.Description,
-                isSystem: true);
-
-            _context.Roles.Add(role);
-
-            foreach (var code in template.PermissionCodes)
-            {
-                _context.RolePermissions.Add(
-                    RolePermission.Create(_guids.NewId(), organizationId, role.Id, code));
-            }
-
-            result[template.Name] = role.Id;
-            created++;
-        }
-
-        if (created > 0)
-        {
-            await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            IdentitySeedLog.RolesCreated(_logger, created, organizationId);
-        }
-
-        return result;
-    }
+        CancellationToken cancellationToken = default) =>
+        _provisioning.EnsureSystemRolesAsync(organizationId, cancellationToken);
 
     /// <summary>
     /// Creates the demo owner account and grants it the demo branch. Development only: production
@@ -122,11 +70,11 @@ public sealed class IdentitySeeder
 
         try
         {
-            var roles = await CreateSystemRolesAsync(organizationId, cancellationToken).ConfigureAwait(false);
+            await CreateSystemRolesAsync(organizationId, cancellationToken).ConfigureAwait(false);
 
             var exists = await _context.Users
                 .IgnoreQueryFilters()
-                .AnyAsync(u => u.Id == DemoOwnerUserId, cancellationToken)
+                .AnyAsync(u => u.OrganizationId == organizationId && u.Email == DemoOwnerEmail, cancellationToken)
                 .ConfigureAwait(false);
 
             if (exists)
@@ -134,30 +82,29 @@ public sealed class IdentitySeeder
                 return;
             }
 
-            var user = User.Create(
-                DemoOwnerUserId,
-                organizationId,
-                DemoOwnerEmail,
-                "Demo Owner",
-                _passwordHasher.Hash(DemoOwnerPassword));
+            var created = await _provisioning
+                .CreateOwnerAsync(
+                    organizationId,
+                    branchId,
+                    new OwnerAccountRequest(
+                        DemoOwnerEmail,
+                        "Demo Owner",
+                        DemoOwnerPassword,
 
-            user.ConfirmEmail();
-            _context.Users.Add(user);
+                        // Development convenience: the demo account is used straight away in
+                        // Swagger and by the integration suite, so it skips both ceremonies.
+                        MustChangePassword: false,
+                        EmailConfirmed: true,
+                        UserId: DemoOwnerUserId),
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-            if (roles.TryGetValue(SystemRoles.Owner, out var ownerRoleId))
+            if (created.IsFailure)
             {
-                _context.UserRoles.Add(UserRole.Create(_guids.NewId(), organizationId, user.Id, ownerRoleId));
+                throw new InvalidOperationException(
+                    "Seeding the development owner failed: " + created.Error);
             }
 
-            _context.UserBranches.Add(UserBranch.Create(
-                _guids.NewId(),
-                organizationId,
-                user.Id,
-                branchId,
-                roleId: null,
-                isDefault: true));
-
-            await _context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             IdentitySeedLog.DemoOwnerCreated(_logger, DemoOwnerEmail);
         }
         finally
@@ -169,12 +116,6 @@ public sealed class IdentitySeeder
 
 internal static partial class IdentitySeedLog
 {
-    [LoggerMessage(
-        EventId = 6300,
-        Level = LogLevel.Information,
-        Message = "Created {Count} system role(s) for organization {OrganizationId}")]
-    public static partial void RolesCreated(ILogger logger, int count, Guid organizationId);
-
     [LoggerMessage(
         EventId = 6301,
         Level = LogLevel.Warning,

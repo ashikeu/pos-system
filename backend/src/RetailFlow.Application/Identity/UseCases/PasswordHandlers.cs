@@ -192,7 +192,7 @@ public sealed class ForgotPasswordHandler : IUseCase<ForgotPasswordRequest, bool
             .FindOrganizationByCodeAsync(request.OrganizationCode ?? string.Empty, cancellationToken)
             .ConfigureAwait(false);
 
-        if (organization is null || !organization.IsActive)
+        if (organization is null || !organization.CanSignIn)
         {
             return true;
         }
@@ -298,7 +298,7 @@ public sealed class ResetPasswordHandler : IUseCase<ResetPasswordRequest, bool>
             .FindOrganizationByCodeAsync(request.OrganizationCode ?? string.Empty, cancellationToken)
             .ConfigureAwait(false);
 
-        if (organization is null || !organization.IsActive)
+        if (organization is null || !organization.CanSignIn)
         {
             return IdentityErrors.TokenInvalid();
         }

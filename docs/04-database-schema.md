@@ -76,26 +76,60 @@ erDiagram
   PosTerminal ||--o{ DeviceRegistration : registered
 ```
 
-**Organization** — `Id`, `Name`, `LegalName`, `Code` (UX per platform), `BinNumber` (VAT BIN),
-`CurrencyCode char(3)` default `BDT`, `DefaultTimeZone` default `Asia/Dhaka`, `DefaultLanguage`
-(`en`/`bn`), `Status tinyint` (Active/Suspended/Closed), `TrialEndsAtUtc`, audit.
+**Organization** — `Id`, `Code` (UX per platform), `Name`, `NameBn`, `LegalName`, `BinNumber`
+(VAT BIN), `AddressLine`, `City`, `PhoneNumber`, `ContactEmail`, `CurrencyCode char(3)` default
+`BDT`, `TimeZoneId` default `Asia/Dhaka`, `DefaultLanguage` (`en`/`bn`), `Status tinyint`
+(Active/Suspended/Closed), `SuspendedAtUtc`, `SuspendedReason`, audit. Suspending, reactivating or
+closing raises a domain event through the outbox. The trial lives on the subscription, not here.
 
-**OrganizationSettings** — one row per org; tax mode (`PriceIncludesTax bit`), `CostingMethod`,
+**OrganizationSettings** — one row per org (UX `OrganizationId`, clustered). Every column is
+**nullable**, and null means "inherit the platform default" (ADR-0031): `PriceIncludesTax`,
 `AllowNegativeStock`, `RequireOpenShiftToSell`, `CashRoundingIncrement decimal(19,4)`,
-`CashRoundingMode`, `MaxLineDiscountPercent`, `VoidWindow`, `ReturnWindowDays`,
-`OfflineMaxDurationHours`, `OfflineMaxSaleAmount`, `OfflineMaxCumulativeAmount`,
-`LoyaltyEnabled`, `CreditSalesEnabled`, `InvoiceNumberFormat`, `ReceiptTemplate58/80`,
-`AccessTokenMinutes`, `RefreshTokenDays`, `MfaRequiredForRoles`.
+`CashRoundingMode tinyint`, `MaxLineDiscountPercent decimal(9,6)`, `VoidWindowMinutes`,
+`ReturnWindowDays`, `OfflineMaxDurationHours`, `OfflineMaxSaleAmount`,
+`OfflineMaxCumulativeAmount`, `LoyaltyEnabled`, `CreditSalesEnabled`, `InvoiceNumberFormat`,
+`ReceiptTemplate58`, `ReceiptTemplate80`, `ReceiptFooterText`.
 
-**BranchSettings** — overrides a documented subset of the above (nullable = inherit).
+> Two deliberate differences from the original sketch (ADR-0031). There is **no `CostingMethod`
+> column**: ADR-0009 fixes moving weighted average platform-wide, and a one-value knob invites
+> someone to change it. `AccessTokenMinutes`, `RefreshTokenDays` and `MfaRequiredForRoles` stay
+> **platform-level** configuration in `appsettings`, because per-tenant token lifetimes need the
+> token service to take them per tenant first, and a security setting that silently does nothing is
+> worse than one that is clearly global.
 
-**Branch** — `Id`, `OrganizationId`, `Code` (UX `(OrganizationId, Code)`), `Name`, address fields,
-`TimeZone`, `BusinessDayStart time`, `IsActive`, audit.
-**Warehouse** — `Id`, `OrganizationId`, `BranchId`, `Code`, `Name`, `Type` (Main/Sales/Damage/Transit),
-`IsDefault`, `IsActive`. Damage and Transit are real warehouses so write-offs and transfers stay in
-the ledger.
-**PosTerminal** — `Id`, `OrganizationId`, `BranchId`, `Code`, `Name`, `DefaultWarehouseId`,
-`ReceiptSeriesId`, `IsActive`, `LastSyncAtUtc`, `AppVersion`, `DeviceFingerprint`.
+**BranchSettings** — one row per branch (UX `(OrganizationId, BranchId)`, clustered), same nullable
+columns as above **except** `InvoiceNumberFormat`, which is organization-wide so document numbers
+stay comparable across branches (A-14).
+
+**Branch** — `Id`, `OrganizationId`, `Code` (UX `(OrganizationId, Code)`, clustered), `Name`,
+`NameBn`, address fields, `TimeZoneId`, `BusinessDayStart time`, `IsActive`, audit. The last active
+branch of a tenant cannot be deactivated (A-15).
+**Warehouse** — `Id`, `OrganizationId`, `BranchId`, `Code` (UX `(OrganizationId, Code)`), `Name`,
+`Type tinyint` (Main/Sales/Damage/Transit), `IsDefault`, `IsActive`. Damage and Transit are real
+warehouses so write-offs and transfers stay in the ledger, and neither may be a branch default.
+A filtered unique index `(OrganizationId, BranchId) WHERE IsDefault = 1` means "the branch default"
+can only ever name one row, and the default may not be deactivated (A-15).
+**PosTerminal** — `Id`, `OrganizationId`, `BranchId`, `Code` (UX `(OrganizationId, Code)`), `Name`,
+`DefaultWarehouseId` (no FK: it is a nullable override, and the handlers check it belongs to the
+terminal's branch), `ReceiptTemplate58`, `ReceiptTemplate80`, `IsActive`, `LastSyncAtUtc`,
+`AppVersion`, `DeviceFingerprint`. Receipt numbering is allocated per terminal by
+`TerminalSequenceBlock` (Phase 9), so there is no `ReceiptSeriesId` column here.
+
+**SubscriptionPlan** — platform reference data, not tenant-owned: `Id`, `Code` (UX, clustered),
+`Name`, `Description`, `MonthlyPrice decimal(19,4)`, `CurrencyCode`, `TrialDays`, `SortOrder`,
+`IsActive`. Seeded on start-up (FREE, STARTER, STANDARD, ENTERPRISE); the seeder adds what is
+missing and never overwrites an existing row, because prices are a commercial decision whoever runs
+the platform may change. No per-tenant change sequence: tills do not sync the price list.
+**PlanFeature** — `Id`, `PlanId`, `Code tinyint` (Branches, Warehouses, PosTerminals, Users,
+Products, OfflineMode, Loyalty, CreditSales, MultiWarehouse), `MaxCount int NULL` (null =
+unlimited), `IsEnabled`. UX `(PlanId, Code)`. This is the table the original sketch called
+`FeatureLimit`.
+**OrganizationSubscription** — `Id`, `OrganizationId` (UX, clustered — one answer to "which plan is
+this shop on"), `PlanId`, `Status tinyint` (Trialing/Active/PastDue/Expired/Cancelled),
+`StartsOn date`, `CurrentPeriodEndsOn date`, `TrialEndsOn date NULL`, `GraceDays`,
+`CancelledAtUtc`, `CancellationReason`, audit. Writes are allowed until
+`CurrentPeriodEndsOn + GraceDays`; after that the tenant is read-only but still readable
+(FR-TEN-06, ADR-0030).
 
 **User** — `Id`, `OrganizationId` (nullable only for platform admins), `Email` (UX
 `(OrganizationId, Email)`), `UserName`, `PhoneNumber`, `PasswordHash`, `PasswordHashVersion`,

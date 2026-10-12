@@ -154,10 +154,25 @@ public sealed class AuthenticationFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_suspended_organization_cannot_sign_in()
+    public async Task A_suspended_organization_can_still_sign_in_because_it_gets_a_read_only_surface()
     {
         var tenant = await IdentityTestData.CreateTenantAsync(_fixture, "SUSP" + Random.Shared.Next(1000, 9999));
         await IdentityTestData.SuspendOrganizationAsync(_fixture, tenant);
+        using var client = Client;
+
+        var response = await LoginAsync(client, tenant.OwnerEmail, organizationCode: tenant.OrganizationCode);
+
+        // Suspension is a billing state, not a security one: the shop keeps read access and the
+        // renewal endpoints, and writes are refused per request by the tenant write gate
+        // (FR-TEN-06, ADR-0030). The write side of this is covered by TenancyEndpointTests.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task A_closed_organization_cannot_sign_in()
+    {
+        var tenant = await IdentityTestData.CreateTenantAsync(_fixture, "CLSD" + Random.Shared.Next(1000, 9999));
+        await IdentityTestData.CloseOrganizationAsync(_fixture, tenant);
         using var client = Client;
 
         var response = await LoginAsync(client, tenant.OwnerEmail, organizationCode: tenant.OrganizationCode);
