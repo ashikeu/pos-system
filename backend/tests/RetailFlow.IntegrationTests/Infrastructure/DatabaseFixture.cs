@@ -59,6 +59,7 @@ public sealed class DatabaseFixture : IAsyncLifetime
         // The tenancy use cases are registered by the API composition root, and the tests that
         // drive them directly need the same pipeline — decorators included — that HTTP callers get.
         services.AddTenancyUseCases();
+        services.AddCatalogUseCases();
         TestUseCases.Register(services);
 
         _provider = services.BuildServiceProvider(validateScopes: true);

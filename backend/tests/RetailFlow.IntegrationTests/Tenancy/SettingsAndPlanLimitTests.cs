@@ -223,7 +223,10 @@ public sealed class SettingsAndPlanLimitTests : IAsyncLifetime
         result.IsSuccess.Should().BeTrue(result.IsFailure ? result.Error.ToString() : string.Empty);
         result.Value.PlanCode.Should().Be("STANDARD");
         result.Value.Usage.Should().Contain(u => u.Code == PlanFeatureCode.Branches && u.Used == 2);
-        result.Value.Usage.Should().Contain(u => u.Code == PlanFeatureCode.Products && !u.IsCounted,
-            "products are not countable until the catalog exists, and that is reported rather than enforced");
+        result.Value.Usage.Should().Contain(
+            u => u.Code == PlanFeatureCode.Products && u.IsCounted && u.Used == 0,
+            "the catalog counter landed in Phase 5, and this tenant has no products yet");
+        result.Value.Usage.Should().Contain(u => u.Code == PlanFeatureCode.OfflineMode && !u.IsCounted,
+            "a switch feature is on or off, so it is reported without a count");
     }
 }

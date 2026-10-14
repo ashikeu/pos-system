@@ -1,3 +1,4 @@
+using RetailFlow.Application.Catalog.Abstractions;
 using RetailFlow.Application.Identity.Abstractions;
 using RetailFlow.Application.Platform.Abstractions;
 using RetailFlow.Application.Tenancy.Abstractions;
@@ -15,26 +16,30 @@ namespace RetailFlow.Infrastructure.Tenancy.Services;
 /// <remarks>
 /// Three deliberate leniencies, so the guard never blocks a tenant on missing information: no
 /// subscription row means no limits, a plan that says nothing about a feature does not limit it,
-/// and a feature whose counter does not exist yet (<see cref="PlanFeatureCode.Products"/> until the
-/// catalog lands in Phase 5) is reported but not enforced.
+/// and a feature whose counter does not exist yet is reported but not enforced. Products became
+/// countable with the catalog in Phase 5; the remaining uncounted codes are switches.
 /// </remarks>
 internal sealed class PlanLimitGuard : IPlanLimitGuard
 {
     private readonly ITenancyRepository _repository;
     private readonly IIdentityProvisioning _identity;
+    private readonly ICatalogStatistics _catalog;
     private readonly ITenantContext _tenant;
 
     public PlanLimitGuard(
         ITenancyRepository repository,
         IIdentityProvisioning identity,
+        ICatalogStatistics catalog,
         ITenantContext tenant)
     {
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(tenant);
 
         _repository = repository;
         _identity = identity;
+        _catalog = catalog;
         _tenant = tenant;
     }
 
@@ -132,6 +137,7 @@ internal sealed class PlanLimitGuard : IPlanLimitGuard
         PlanFeatureCode.Warehouses,
         PlanFeatureCode.PosTerminals,
         PlanFeatureCode.Users,
+        PlanFeatureCode.Products,
     ];
 
     private async Task<PlanFeature?> FindFeatureAsync(PlanFeatureCode code, CancellationToken cancellationToken)
@@ -167,8 +173,11 @@ internal sealed class PlanLimitGuard : IPlanLimitGuard
         PlanFeatureCode.Users =>
             await _identity.CountActiveUsersAsync(_tenant.OrganizationId, cancellationToken).ConfigureAwait(false),
 
-        // Products arrive with the catalog in Phase 5; the switch features below are not counted
-        // at all, they are simply on or off.
+        // Archived products do not count: withdrawing a line should not force an upgrade.
+        PlanFeatureCode.Products =>
+            await _catalog.CountProductsAsync(_tenant.OrganizationId, cancellationToken).ConfigureAwait(false),
+
+        // The remaining codes are switches, not counts: they are either in the plan or not.
         _ => null,
     };
 }

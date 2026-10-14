@@ -16,6 +16,13 @@ public static class RoundingPolicy
     /// <summary>Decimal places kept for quantities.</summary>
     public const int QuantityScale = 3;
 
+    /// <summary>
+    /// Decimal places kept for unit costs, rates and conversion factors (ADR-0006). Costs need more
+    /// precision than prices: a sack of rice bought at 2 350 BDT for 50 kg is 47.000000 per kg, and
+    /// rounding that to four places before multiplying by a sold quantity moves the COGS.
+    /// </summary>
+    public const int CostScale = 6;
+
     public static decimal Round(decimal value, int decimals) =>
         decimal.Round(value, decimals, MidpointRounding.AwayFromZero);
 
@@ -26,6 +33,9 @@ public static class RoundingPolicy
     public static decimal Round2(decimal value) => Round(value, PresentationScale);
 
     public static decimal RoundQuantity(decimal value) => Round(value, QuantityScale);
+
+    /// <summary>Rounds a unit cost, a rate or a conversion factor.</summary>
+    public static decimal Round6(decimal value) => Round(value, CostScale);
 
     /// <summary>
     /// Rounds a cash amount to a configured increment, e.g. the nearest 1.00 BDT.

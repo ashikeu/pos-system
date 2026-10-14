@@ -2,15 +2,21 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using RetailFlow.Application.Catalog.Abstractions;
+using RetailFlow.Application.Catalog.UseCases;
 using RetailFlow.Application.Identity.Abstractions;
 using RetailFlow.Application.Platform.Abstractions;
+using RetailFlow.Application.Pricing.Abstractions;
+using RetailFlow.Application.Pricing.UseCases;
 using RetailFlow.Application.Tenancy.Abstractions;
+using RetailFlow.Infrastructure.Catalog.Persistence;
 using RetailFlow.Infrastructure.Identity.Persistence;
 using RetailFlow.Infrastructure.Identity.Services;
 using RetailFlow.Infrastructure.Platform.Persistence;
 using RetailFlow.Infrastructure.Platform.Persistence.Interceptors;
 using RetailFlow.Infrastructure.Platform.Persistence.SqlServer;
 using RetailFlow.Infrastructure.Platform.Services;
+using RetailFlow.Infrastructure.Pricing.Persistence;
 using RetailFlow.Infrastructure.Tenancy.Persistence;
 using RetailFlow.Infrastructure.Tenancy.Services;
 
@@ -75,6 +81,7 @@ public static class DependencyInjection
         services.AddPersistence(connectionString, databaseOptions);
         services.AddIdentityServices(configuration);
         services.AddTenancyServices(configuration);
+        services.AddCatalogServices();
 
         return services;
     }
@@ -204,6 +211,25 @@ public static class DependencyInjection
         services.TryAddScoped<ITenantStatusProvider, TenantStatusProvider>();
         services.TryAddScoped<IPlanLimitGuard, PlanLimitGuard>();
         services.AddScoped<SubscriptionPlanSeeder>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Catalog and pricing: repositories, and the two resolution services the POS path depends on.
+    /// The resolvers live in the application layer — gathering candidates is I/O, ranking them is a
+    /// rule — so only their data access is registered here.
+    /// </summary>
+    private static IServiceCollection AddCatalogServices(this IServiceCollection services)
+    {
+        services.TryAddScoped<CatalogRepository>();
+        services.TryAddScoped<ICatalogRepository>(sp => sp.GetRequiredService<CatalogRepository>());
+        services.TryAddScoped<ICatalogStatistics>(sp => sp.GetRequiredService<CatalogRepository>());
+
+        services.TryAddScoped<IPricingRepository, PricingRepository>();
+        services.TryAddScoped<IPriceResolver, PriceResolutionService>();
+        services.TryAddScoped<ITaxResolver, TaxResolutionService>();
+        services.TryAddScoped<IPricingLookup, PricingLookupService>();
 
         return services;
     }

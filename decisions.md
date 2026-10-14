@@ -39,6 +39,9 @@ Status values: `Accepted` · `Proposed` · `Superseded` · `Deprecated`.
 | [0030](#adr-0030) | A suspended or lapsed tenant is read-only, not locked out | Accepted | 2026-10-12 |
 | [0031](#adr-0031) | Settings as nullable overrides over configured platform defaults | Accepted | 2026-10-12 |
 | [0032](#adr-0032) | Tenant provisioning is operator-only and idempotent | Accepted | 2026-10-12 |
+| [0033](#adr-0033) | Every primary key is application-generated, and EF Core is told so | Accepted | 2026-10-13 |
+| [0034](#adr-0034) | One lookup answers product, price and tax | Accepted | 2026-10-13 |
+| [0035](#adr-0035) | A catalog import is a dry run until told otherwise | Accepted | 2026-10-13 |
 
 ---
 
@@ -836,3 +839,78 @@ safe — email verification before provisioning, a captcha or invite code, and i
 That bootstrap — creating the operator organization and account from configuration — is a Phase 18
 deployment concern and is listed there; locally, `Tenancy` plans are seeded on start-up and the
 integration tests grant the permission through an ordinary role, which is the only path that exists.
+
+---
+
+## Phase 5 — Catalog, pricing and tax
+
+### ADR-0033
+**Every primary key is application-generated, and EF Core is told so** · Accepted · 2026-10-13
+
+*Context.* Ids come from `IGuidGenerator` as UUIDv7 (ADR-0005), never from the database. EF Core,
+left to its conventions, assumes a `Guid` key is store-generated. For an entity it discovers through
+a navigation during `DetectChanges` it then reads an already-set key as evidence that the row
+exists, and tracks the entity as `Modified`. Adding a price tier to a price list loaded from the
+database produced an `UPDATE` against a row that had never been inserted, and the save failed with
+`DbUpdateConcurrencyException` ("expected to affect 1 row(s), but actually affected 0") — which
+reads like a concurrency conflict and is nothing of the kind.
+
+*Decision.* `RetailFlowDbContext.OnModelCreating` declares every `Guid` primary key
+`ValueGeneratedNever()`. The rule is applied across the model rather than per entity configuration,
+so an entity added in a later phase cannot be left out of it.
+
+*Consequences.* A child added to a loaded aggregate is `Added` and is inserted, which is what the
+calling code already said. No schema change: the convention produces no DDL for a `Guid` key, and
+`dotnet ef migrations has-pending-model-changes` reports the snapshot in sync. The hazard this
+removes grows with the phases ahead — sale lines, ledger entries and payments are all children
+added to saved aggregates, and the failure looked like a transient conflict rather than a modelling
+mistake.
+
+---
+
+### ADR-0034
+**One lookup answers product, price and tax** · Accepted · 2026-10-13
+
+*Decision.* `GET /api/v1/catalog/lookup?code=...` returns the variant, the resolved price with its
+source, the tax snapshot in force and the computed line in one response. A till that scans a code
+needs all four to draw one row, and three round trips over a shop's connection is three chances to
+show a half-filled line. The code is resolved as barcode, then SKU, then product code; the matched
+barcode's `PackQuantity` is the quantity that scan sells.
+
+*Also decided.*
+
+- A withdrawn product resolves, with `IsSellable = false`, its price and its tax. "Unknown barcode"
+  is the answer that makes a cashier scan the same item four more times.
+- `PriceResolutionService` and `TaxResolutionService` sit behind `IPriceResolver` / `ITaxResolver`
+  as Application services rather than use cases, because Phase 9 checkout calls them per line inside
+  the sale transaction, not over HTTP.
+- The arithmetic lives in `Domain/Pricing` (`PriceResolution`, `TaxCalculator`) and takes candidates
+  and rates as arguments — no repository, no clock. That is what lets the money rules be tested
+  exhaustively as pure functions, leaving the integration tests to prove only that the right rows
+  reach them.
+
+*Consequences.* The lookup is the hottest read in the product and is indexed for it:
+`UX_Barcode_Org_Code`, `UX_ProductVariant_Org_Sku`, `UX_Product_Org_Code` and
+`IX_PriceListItem_Org_Variant`. Its query narrows the variants *before* projecting, because EF
+cannot translate a predicate written against a projected type's members; written the other way round
+it did not translate at all, and a projection filtered afterwards would be filtered in memory.
+
+---
+
+### ADR-0035
+**A catalog import is a dry run until told otherwise, and then all-or-nothing** · Accepted · 2026-10-13
+
+*Context.* The first thing a shop does with a supplier's spreadsheet is import it to see what
+happens. "See what happens" must not mean "rewrite the prices".
+
+*Decision.* `ImportProductsRequest.DryRun` defaults to `true`: the file is parsed, every row is
+validated against the same aggregates the API uses, and the response is a row-by-row report carrying
+the row numbers the spreadsheet shows. A real import validates the whole file first and writes
+nothing unless every row passes, and `UpdateExisting` must be set before a file may change products
+that already exist. At most 5 000 rows per file, and the plan's product limit is checked for the
+whole batch before any of it is written.
+
+*Consequences.* A shop gets either a clean catalog or a list of what to fix, never half a catalog.
+Duplicate codes, SKUs and barcodes *within* a file are reported as duplicates rather than failing on
+a unique index halfway through. Export emits the columns the importer accepts, so a catalog can be
+round-tripped through Excel — which is how shops actually work.

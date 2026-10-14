@@ -1,8 +1,10 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using RetailFlow.Application.Platform.Abstractions;
+using RetailFlow.Domain.Catalog;
 using RetailFlow.Domain.Identity;
 using RetailFlow.Domain.Platform;
+using RetailFlow.Domain.Pricing;
 using RetailFlow.Domain.Tenancy;
 using RetailFlow.Infrastructure.Platform.Persistence.Records;
 using RetailFlow.Infrastructure.Platform.Persistence.SqlServer;
@@ -42,6 +44,40 @@ public sealed class RetailFlowDbContext : DbContext
     public DbSet<PlanFeature> PlanFeatures => Set<PlanFeature>();
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
+    public DbSet<Category> Categories => Set<Category>();
+
+    public DbSet<Brand> Brands => Set<Brand>();
+
+    public DbSet<UnitOfMeasure> UnitsOfMeasure => Set<UnitOfMeasure>();
+
+    public DbSet<UomConversion> UomConversions => Set<UomConversion>();
+
+    public DbSet<Product> Products => Set<Product>();
+
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+
+    public DbSet<Barcode> Barcodes => Set<Barcode>();
+
+    public DbSet<ProductAttribute> ProductAttributes => Set<ProductAttribute>();
+
+    public DbSet<ProductImage> ProductImages => Set<ProductImage>();
+
+    public DbSet<ProductBranchSetting> ProductBranchSettings => Set<ProductBranchSetting>();
+
+    public DbSet<TaxClass> TaxClasses => Set<TaxClass>();
+
+    public DbSet<TaxRule> TaxRules => Set<TaxRule>();
+
+    public DbSet<TaxRuleVersion> TaxRuleVersions => Set<TaxRuleVersion>();
+
+    public DbSet<PriceList> PriceLists => Set<PriceList>();
+
+    public DbSet<PriceListItem> PriceListItems => Set<PriceListItem>();
+
+    public DbSet<BranchPriceOverride> BranchPriceOverrides => Set<BranchPriceOverride>();
+
+    public DbSet<DiscountRule> DiscountRules => Set<DiscountRule>();
 
     public DbSet<User> Users => Set<User>();
 
@@ -90,6 +126,7 @@ public sealed class RetailFlowDbContext : DbContext
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(RetailFlowDbContext).Assembly);
 
+        UseClientGeneratedKeys(modelBuilder);
         ApplyTenantQueryFilters(modelBuilder);
 
         if (Database.IsSqlServer())
@@ -110,6 +147,33 @@ public sealed class RetailFlowDbContext : DbContext
         configurationBuilder.Properties<string>().HaveMaxLength(256);
 
         base.ConfigureConventions(configurationBuilder);
+    }
+
+    /// <summary>
+    /// Declares every <see cref="Guid"/> primary key as application-generated, which is what they
+    /// are: ids come from <c>IGuidGenerator</c> as UUIDv7 (ADR-0017), never from the database.
+    /// </summary>
+    /// <remarks>
+    /// This is not cosmetic. While EF believes a Guid key is store-generated, it reads an
+    /// already-set key as proof that the row exists, so a child added to a loaded aggregate — a
+    /// price tier today, a sale line later — is tracked as <c>Modified</c> and saved as an UPDATE
+    /// that matches no rows. The save then fails as a bogus concurrency conflict instead of
+    /// inserting.
+    /// </remarks>
+    private static void UseClientGeneratedKeys(ModelBuilder modelBuilder)
+    {
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetDeclaredProperties())
+            {
+                if (property.ClrType == typeof(Guid) && property.IsPrimaryKey())
+                {
+                    modelBuilder.Entity(entityType.ClrType)
+                        .Property(property.Name)
+                        .ValueGeneratedNever();
+                }
+            }
+        }
     }
 
     /// <summary>

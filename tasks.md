@@ -5,7 +5,7 @@ Single source of truth for status. Update it in the same change that moves the w
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done (built + tested) · `[!]` blocked ·
 `[-]` deferred (with reason)
 
-Last updated: **2026-10-12** · Current phase: **Phase 4 (complete) → Phase 5 next**
+Last updated: **2026-10-13** · Current phase: **Phase 5 (complete) → Phase 6 next**
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: **2026-10-12** · Current phase: **Phase 4 (complete) → Phase 5 
 | 2 | Platform foundations: EF Core, tenancy, audit, outbox, idempotency, migrations, seed | `[x]` |
 | 3 | Identity & authorization | `[x]` |
 | 4 | Tenancy management (organizations, branches, warehouses, terminals, settings) | `[x]` |
-| 5 | Catalog, pricing & tax configuration | `[ ]` |
+| 5 | Catalog, pricing & tax configuration | `[x]` |
 | 6 | Inventory core (ledger, balances, adjustments, counts, transfers) | `[ ]` |
 | 7 | Procurement (suppliers, PO, GRN, invoices, returns, payments, landed cost) | `[ ]` |
 | 8 | Customers, credit & loyalty | `[ ]` |
@@ -42,6 +42,11 @@ Blocked / waiting on externals:
   built, device-specific validation deferred.
 - `[-]` Docker-based integration tests — Docker daemon is not running on this machine; LocalDB
   fallback is used locally, Testcontainers in CI (ADR-0020).
+- `[-]` `xlsx` catalog import — CSV is implemented, which is what Excel exports; reading the binary
+  workbook format needs a spreadsheet library and is not worth a dependency until a customer asks.
+- `[-]` Weight-embedded (scale label) barcode parsing — the symbology is accepted and stored, but
+  splitting the item part from the embedded weight or price needs the tenant's label prefix scheme,
+  which arrives with scale hardware in Phase 14.
 
 ---
 
@@ -244,19 +249,73 @@ create an organization with roles, an owner and a terminal that can sign in imme
       worthwhile when it also has to notify, which is Phase 17.
 - [-] Branch-level deletion of any kind: deactivation only, so history stays intact (NFR-09).
 
-## Phase 5 — Catalog, pricing & tax `[ ]`
+## Phase 5 — Catalog, pricing & tax `[x]`
 
-- [ ] Entities: `Category`, `Brand`, `UnitOfMeasure`, `UomConversion`, `Product`, `ProductVariant`,
-      `Barcode`, `ProductImage`, `ProductAttribute`, `TaxClass`, `TaxRule`, `TaxRuleVersion`,
-      `PriceList`, `PriceListItem`, `BranchPriceOverride`, `DiscountRule`
-- [ ] Variant/SKU/barcode rules, multi-barcode lookup, archival instead of delete
-- [ ] Price resolution service (customer group → branch → price list → base) + tax engine
-      (inclusive/exclusive, VAT + SD, effective dating, versioned snapshots)
-- [ ] Batch/lot, expiry and serial tracking flags with per-product policy
-- [ ] Reorder thresholds, min stock, supplier links
-- [ ] CSV/Excel import & export with row-level validation report, dry-run mode
-- [ ] Tests: price resolution precedence, inclusive/exclusive tax math, SD stacking, rounding,
-      barcode uniqueness per tenant, import validation
+- [x] Entities: `Category` (bounded nesting, no cycles), `Brand`, `UnitOfMeasure` (kind +
+      decimal places), `UomConversion` (same-kind only), `Product`, `ProductVariant`, `Barcode`,
+      `ProductImage`, `ProductAttribute`, `ProductBranchSetting`, `TaxClass`, `TaxRule`,
+      `TaxRuleVersion`, `PriceList`, `PriceListItem`, `BranchPriceOverride`, `DiscountRule` — one
+      migration, `20261012160709_CatalogAndPricingSchema`
+- [x] Variant, SKU and barcode rules: one default variant per product that cannot be withdrawn while
+      it is the default, SKU and product code unique per tenant, barcodes unique per tenant across
+      every variant, GS1 check digits verified for EAN-13/EAN-8/UPC-A, pack quantity per barcode so
+      a case scan sells the case, and archival everywhere instead of delete
+- [x] Lookup by barcode → SKU → product code in one call that also returns the resolved price, the
+      tax snapshot and the computed line (ADR-0034); a withdrawn product resolves with
+      `isSellable: false` rather than "unknown code"
+- [x] Price resolution (manual → customer → customer group → branch → default list → variant base)
+      with price-list priority, effective windows and quantity tiers; tax engine with
+      inclusive/exclusive pricing, VAT + SD (SD in or out of the VAT base), effective-dated versions
+      and a per-line snapshot (ADR-0019)
+- [x] Batch, expiry and serial tracking flags with the invariants between them (expiry needs batch,
+      batch and serial are exclusive, a service holds no stock) and a per-product near-expiry window
+- [x] Reorder thresholds and minimum stock per variant per branch, with a reorder level below the
+      minimum refused, plus a per-branch sellable switch
+- [x] CSV import and export: dry run by default, row-level report with spreadsheet row numbers,
+      all-or-nothing when run for real, duplicate detection inside the file, plan-limit check for the
+      whole batch, export in the shape the importer accepts (ADR-0035)
+- [x] API: `api/v1/products` (search, CRUD, status, variants, barcodes, attributes, branch policy),
+      `api/v1/catalog` (lookup, categories, brands, units, conversions, import, export),
+      `api/v1/tax` (classes, rate versions, preview) and `api/v1/pricing` (lists, list items,
+      branch prices, resolve, discount rules) — every endpoint behind a `catalog.*` or
+      `pricing.*` permission
+- [x] `Products` plan limit now counted for real (archived products excluded), closing the Phase 4
+      deferral
+- [x] Tests (381 total, all executed: 198 domain + 21 application + 162 integration): 79 new domain
+      (30 catalog: product/variant/barcode invariants, check digits, UOM decimals and conversions,
+      category nesting, reorder guards — 49 pricing: resolution precedence and ties, tiers,
+      inclusive/exclusive and SD-in-base arithmetic, bill-discount allocation, exempt and
+      zero-rated handling, rate versioning and backdating, price-list windows), 24 new integration
+      (resolution order against a real database, branch scope, group list, manual override, expired
+      list, effective-dated rates, exempt fallback, the scan path end to end, case barcode and
+      wholesale tier, product creation and code/SKU/barcode uniqueness per tenant, the same barcode
+      in two tenants, archival leaving the search but keeping the rows, dry-run report, all-or-nothing
+      import, import/update/export round trip, price tiers added then corrected)
+
+### Two things the tests corrected
+
+- The lookup query filtered on the members of a projected type, which EF Core cannot translate —
+  every lookup threw. It now narrows the variants before projecting. The same rewrite fixed a
+  second defect the first version hid: a variant with a case barcode, looked up **by SKU**, sold the
+  case quantity, because the left join brought back an arbitrary one of its barcodes.
+- Adding a price tier to a saved price list failed as a concurrency conflict: EF believed the
+  database generated the keys, so it tracked the new child as `Modified` and issued an `UPDATE` that
+  matched no rows. Every `Guid` primary key is now declared `ValueGeneratedNever` (ADR-0033) — a bug
+  that would otherwise have reappeared on every sale line in Phase 9.
+
+### Deferred out of Phase 5, with reasons
+
+- [-] `ProductSupplier` links: a supplier link needs a `Supplier`, which arrives with procurement in
+      Phase 7. `ProductVariant.LastPurchaseCost` is in place for it to write to.
+- [-] Customer-specific prices (step 2 of the resolution order) and customer-group price lists:
+      `PriceSource.CustomerPrice` and `PriceList.CustomerGroupId` exist and are resolved, but the
+      customer tables are Phase 8, so nothing can supply a customer id yet. Group lists are already
+      exercised in tests with a group id the resolver matches as a scope.
+- [-] Applying discount rules to a basket: the rules, their guards and their arithmetic are done and
+      tested; choosing which rules a sale qualifies for belongs to checkout in Phase 9.
+- [-] Product image upload: the entity and table are in place, but storing bytes needs an object
+      store, which is deployment work (Phase 18), and a screen to use it (Phase 15).
+- [-] Coupons and promotions: Phase 8, with the customer and loyalty module.
 
 ## Phase 6 — Inventory core `[ ]`
 

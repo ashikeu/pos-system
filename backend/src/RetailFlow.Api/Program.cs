@@ -78,6 +78,7 @@ public class Program
             .AddInfrastructure(builder.Configuration)
             .AddIdentityUseCases()
             .AddTenancyUseCases()
+            .AddCatalogUseCases()
             .AddRetailFlowAuthentication(builder.Configuration)
             .AddRetailFlowRateLimiting(builder.Configuration);
 

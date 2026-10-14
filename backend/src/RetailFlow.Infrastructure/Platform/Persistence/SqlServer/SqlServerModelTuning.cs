@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using RetailFlow.Domain.Catalog;
+using RetailFlow.Domain.Pricing;
 using RetailFlow.Domain.Tenancy;
 using RetailFlow.Infrastructure.Platform.Persistence.Records;
 
@@ -99,6 +101,47 @@ internal static class SqlServerModelTuning
         {
             entity.HasKey(p => p.Id).IsClustered(false);
             entity.HasIndex(p => p.Code).IsUnique().IsClustered();
+        });
+
+        // The catalog is read far more than it is written, and always by tenant and code: a
+        // barcode scan, an import file and a stock sheet all arrive as a code.
+        modelBuilder.Entity<Product>(entity =>
+        {
+            entity.HasKey(p => p.Id).IsClustered(false);
+            entity.HasIndex(p => new { p.OrganizationId, p.Code }).IsUnique().IsClustered();
+        });
+
+        modelBuilder.Entity<ProductVariant>(entity =>
+        {
+            entity.HasKey(v => v.Id).IsClustered(false);
+            entity.HasIndex(v => new { v.OrganizationId, v.Sku }).IsUnique().IsClustered();
+        });
+
+        // The hottest index in the system: every scan at every till is a seek into it.
+        modelBuilder.Entity<Barcode>(entity =>
+        {
+            entity.HasKey(b => b.Id).IsClustered(false);
+            entity.HasIndex(b => new { b.OrganizationId, b.Code }).IsUnique().IsClustered();
+        });
+
+        modelBuilder.Entity<PriceListItem>(entity =>
+        {
+            entity.HasKey(i => i.Id).IsClustered(false);
+            entity.HasIndex(i => new { i.OrganizationId, i.ProductVariantId }).IsClustered();
+        });
+
+        modelBuilder.Entity<BranchPriceOverride>(entity =>
+        {
+            entity.HasKey(p => p.Id).IsClustered(false);
+            entity.HasIndex(p => new { p.OrganizationId, p.BranchId, p.ProductVariantId })
+                .IsUnique()
+                .IsClustered();
+        });
+
+        modelBuilder.Entity<TaxRuleVersion>(entity =>
+        {
+            entity.HasKey(v => v.Id).IsClustered(false);
+            entity.HasIndex(v => new { v.TaxRuleId, v.Version }).IsUnique().IsClustered();
         });
     }
 }

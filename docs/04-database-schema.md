@@ -170,31 +170,68 @@ erDiagram
   ProductVariant ||--o{ ProductSupplier : "supplied as"
 ```
 
-**Product** — `Id`, `OrganizationId`, `Code` (UX), `Name`, `NameBn`, `CategoryId`, `BrandId`,
-`TaxClassId`, `ProductType` (Standard/Service/Composite-reserved), `TrackInventory bit`,
-`TrackBatch bit`, `TrackSerial bit`, `TrackExpiry bit`, `BaseUomId`, `Status tinyint`
-(Draft/Active/Inactive/Archived), `Description`, `IsDeleted`, `ChangeSequence`, audit.
+> As built in Phase 5. `Supplier` / `ProductSupplier` arrive with procurement (Phase 7) and
+> `CustomerGroup`, `Coupon` and `CouponRedemption` with customers and loyalty (Phase 8); until then
+> `PriceList.CustomerGroupId` and `DiscountRule.CustomerGroupId` are scopes the resolver matches,
+> carrying no foreign key.
+
+**Product** — `Id`, `OrganizationId`, `Code` (UX `(OrganizationId, Code)`), `Name`, `NameBn`,
+`Description`, `CategoryId?`, `BrandId?`, `TaxClassId?`, `BaseUomId`, `ProductType tinyint`
+(Standard/Service), `TrackInventory bit`, `TrackBatch bit`, `TrackSerial bit`,
+`TrackExpiry bit`, `NearExpiryDays int?`, `Status tinyint` (Draft/Active/Inactive/Archived),
+`ConcurrencyToken`, `ChangeSequence`, audit. Archived, never deleted (NFR-09).
 **ProductVariant** — `Id`, `OrganizationId`, `ProductId`, `Sku` (UX `(OrganizationId, Sku)`),
-`Name`, `AttributesJson`, `BasePrice decimal(19,4)`, `LastPurchaseCost decimal(19,6)`,
-`UomId`, `PackSize decimal(18,3)`, `Weight`, `IsDefault`, `Status`, `ChangeSequence`.
+`Name`, `BasePrice decimal(19,4)`, `LastPurchaseCost decimal(19,6)?`, `UomId`,
+`PackSize decimal(18,3)`, `WeightInGrams decimal(18,3)?`, `IsDefault`, `Status`,
+`ConcurrencyToken`, `ChangeSequence`. Exactly one default variant per product; the default cannot be
+withdrawn while it is the default.
 **Barcode** — `Id`, `OrganizationId`, `ProductVariantId`, `Code` (UX `(OrganizationId, Code)`),
-`Type` (EAN13/UPC/Code128/Internal/WeightEmbedded), `IsPrimary`, `PackQuantity decimal(18,3)` —
-a case barcode can sell 24 pieces in one scan.
-**UomConversion** — `(OrganizationId, FromUomId, ToUomId)` UX, `Factor decimal(18,6)`.
-**ProductBranchSetting** — per branch: `MinStock`, `ReorderLevel`, `ReorderQuantity`, `IsSellable`.
-**TaxClass** — `Id`, `OrganizationId`, `Code`, `Name`, `IsExempt`, `IsZeroRated`.
-**TaxRule / TaxRuleVersion** — rule per `(TaxClassId, BranchId?)`; version holds
-`Version int`, `VatRate decimal(9,6)`, `SdRate decimal(9,6)`, `SdInVatBase bit`,
-`PriceIncludesTax bit`, `EffectiveFromUtc`, `EffectiveToUtc`, `SroReference`, `Notes`.
-UX `(TaxRuleId, Version)`; a filtered index enforces one open-ended current version per rule.
-**PriceList** — `Id`, `OrganizationId`, `Code`, `Name`, `CustomerGroupId?`, `BranchId?`,
-`Priority int`, `EffectiveFromUtc`, `EffectiveToUtc`, `Version`, `IsActive`.
-**PriceListItem** — `(PriceListId, ProductVariantId)` UX, `UnitPrice decimal(19,4)`,
-`MinQuantity decimal(18,3)` (tiered/wholesale pricing).
-**DiscountRule** — scope (variant/category/customer group/branch), `Kind` (Percent/Amount),
-`Value`, `MaxAmount`, `RequiresPermission`, effective window, `Priority`, `Stackable`.
-**Coupon** — `Code` (UX per org), `Kind`, `Value`, `MinBasket`, `UsageLimitTotal`,
-`UsageLimitPerCustomer`, window, `IsActive`; **CouponRedemption** — `(CouponId, SaleId)` UX.
+`Type tinyint` (Ean13/Ean8/UpcA/Code128/Internal/WeightEmbedded), `IsPrimary`,
+`PackQuantity decimal(18,3)` — a case barcode sells 24 pieces in one scan. Check digits are
+verified for the fixed-length symbologies; `Internal` and `Code128` are free-form.
+**ProductAttribute** — `(ProductId, Name)` UX, `Value`, `SortOrder`. Descriptive only; variant
+identity is the SKU, not an attribute set.
+**ProductImage** — `Id`, `OrganizationId`, `ProductId`, `StorageKey`, `AltText`, `IsPrimary`,
+`SortOrder`. The row holds a storage key, never the bytes.
+**ProductBranchSetting** — UX `(ProductVariantId, BranchId)`, `MinStock decimal(18,3)?`,
+`ReorderLevel decimal(18,3)?`, `ReorderQuantity decimal(18,3)?`, `IsSellable`. A reorder level below
+the minimum stock is refused: it would order after the shelf was already short.
+**UnitOfMeasure** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`, `Kind tinyint`
+(Count/Weight/Volume/Length), `DecimalPlaces` (0 for countable units, ≤ 3 overall — the
+platform quantity scale of ADR-0006).
+**UomConversion** — UX `(OrganizationId, FromUomId, ToUomId)`, `Factor decimal(18,6)`. Both
+units must be of the same kind.
+**Category** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`, `NameBn`, `ParentId?`,
+`Depth` (1..4), `SortOrder`, `Status`. Nesting is bounded (4 levels) and a category cannot become its own ancestor.
+**Brand** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`, `NameBn`, `Status`.
+**TaxClass** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`,
+`Treatment tinyint` (Exclusive/Inclusive/Exempt/ZeroRated), `ExemptionReason`, `IsDefault`,
+`IsActive`. A filtered unique index allows one default class per tenant; an exempt or zero-rated
+class must state a reason, because a VAT return distinguishes them.
+**TaxRule / TaxRuleVersion** — rule per `(TaxClassId, BranchId?)`, UX
+`(OrganizationId, TaxClassId, BranchId)`; version holds `Version int`, `VatRate decimal(9,6)`,
+`SdRate decimal(9,6)`, `SdInVatBase bit`, `PriceIncludesTax bit`, `EffectiveFromUtc`,
+`EffectiveToUtc?`, `SroReference`, `Notes`. UX `(TaxRuleId, Version)`, and a filtered index
+(`EffectiveToUtc IS NULL`) enforces one open-ended current version per rule, so "the rate in force"
+is never ambiguous. Adding a version closes the previous one at the new start instant; backdating
+before the current version's start is refused.
+**PriceList** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`, `CustomerGroupId?`,
+`BranchId?`, `Priority int`, `EffectiveFromUtc?`, `EffectiveToUtc?`, `IsDefault`, `IsActive`.
+A filtered unique index allows one default list per tenant, and the default list cannot be scoped to
+a group or a branch, nor deactivated.
+**PriceListItem** — UX `(PriceListId, ProductVariantId, MinQuantity)` — the quantity tier is
+part of the identity, which is what makes "20 each, 18 from a dozen" two rows rather than two rows
+fighting over one tier. `UnitPrice decimal(19,4)`, `MinQuantity decimal(18,3)`.
+Index `(OrganizationId, ProductVariantId)` is the one the resolver hits on every scan.
+**BranchPriceOverride** — UX `(OrganizationId, BranchId, ProductVariantId)`,
+`UnitPrice decimal(19,4)`, effective window, `IsActive`.
+**DiscountRule** — `Id`, `OrganizationId`, `Code` (UX per org), `Name`,
+`Scope tinyint` (Variant/Category/Brand/Bill), `Kind tinyint` (Percent/Amount),
+`Value decimal(19,6)` (a rate or an amount, whichever `Kind` says), `TargetId?`, `BranchId?`,
+`CustomerGroupId?`, `MinQuantity decimal(18,3)?`, `MinBasketValue decimal(19,4)?`,
+`MaxDiscountAmount decimal(19,4)?`, effective window, `Priority int`, `IsStackable`,
+`RequiredPermission`, `IsActive`. `TargetId` carries no foreign key because it is a variant, a
+category or a brand depending on `Scope`; the handler checks it against the right table.
 
 ## 5. Inventory
 

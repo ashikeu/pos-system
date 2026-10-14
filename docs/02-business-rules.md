@@ -21,6 +21,31 @@ an assumption, it is listed in §8 with the risk of being wrong.
 A resolved price must be ≥ 0. Selling below `UnitCost` requires `price.below_cost` permission and is
 flagged on the exception report.
 
+As built in Phase 5 (`PriceResolution`, `PriceResolutionService`):
+
+- A price list applies only inside its effective window and only while active; an expired list stops
+  applying without anyone editing its items.
+- Within one source, the **highest-priority** list wins; among equal priorities resolution is
+  deterministic, because the candidate ordering is total — two identical candidates cannot swap
+  places between two reads of the same data.
+- Quantity tiers: the **highest tier whose `MinQuantity` the line reaches** wins, so "20 each, 18
+  from a dozen" prices 11 at 20 and 12 at 18.
+- A candidate price of exactly 0 is a price (a line given away deliberately), not a missing one. A
+  negative candidate is ignored.
+- Customer-specific prices (step 2) need the customer tables of Phase 8. The step exists in the
+  resolver and no caller can supply one yet.
+
+**Code lookup at the till** (`LookupProductHandler`), in order: **barcode**, then **SKU**, then
+**product code** (resolving to the product's default variant). All three match exactly, trimmed and
+upper-cased — a scanner sends a barcode, and a person reading a label types a code.
+
+- The quantity one scan sells is the matched barcode's `PackQuantity`: a case barcode sells 24
+  pieces, and the same variant found by SKU or product code sells 1. A lookup that scanned nothing
+  never inherits a case quantity.
+- A withdrawn (inactive or archived) product still resolves, with `IsSellable = false` and the price
+  and tax it would have had. "Unknown barcode" at a till means the cashier scans it four more times;
+  "this line is withdrawn" is a sentence a shop can act on.
+
 **Discount rules**
 
 - Line discount: percent (0–100) or fixed amount, capped by
@@ -78,9 +103,32 @@ Rules:
 - VAT on a return is reversed proportionally from the original line snapshot, not recomputed at
   today's rate.
 
+**Which rate applies** (`TaxResolutionService`), as built in Phase 5:
+
+1. The product's `TaxClass`; a product with no class falls back to the **tenant's default class**,
+   which is how a shop that never opens the tax screen is still taxed correctly.
+2. A `TaxRule` naming the selling **branch** beats the organization-wide rule for that class. There
+   is no nearest-match search: a rule either names this branch or names none.
+3. Within the rule, the **version in force at the instant asked about** — so a line priced for an
+   earlier date uses the rate of that date, and a return uses the rate on the line it reverses.
+
+Two deliberate fail-safes, because a silent zero understates a VAT return:
+
+- A class with **no rate in force** (asked about a date before its first version) resolves as exempt
+  **with a stated reason** (`No tax rate in force for class <code>`), which travels onto the line
+  and the receipt.
+- A tenant with **no tax class configured at all** resolves the same way, with the reason
+  `No tax class configured`, rather than charging a guessed 15%.
+
+Adding a rate version closes the previous one at the new start instant, so the timeline has no gaps
+and no overlaps, and a filtered unique index keeps exactly one open-ended version per rule.
+**Backdating** before the current version's start is refused: a rate that silently changes what last
+week's sales should have charged is a tax problem, not a correction. Exempt and zero-rated classes
+must carry a reason, because a VAT return distinguishes them.
+
 > Compliance note: SD-in-VAT-base is the common Bangladeshi treatment, but applicability varies by
 > product and SRO. The engine takes `s`, `v`, base composition and inclusivity from configuration;
-> §8 records this as an assumption requiring accountant sign-off before a production pilot.
+> §12 records this as an assumption requiring accountant sign-off before a production pilot.
 
 ## 3. Sale totals
 
@@ -272,6 +320,9 @@ Variance     = CountedCash - ExpectedCash          # negative = short, positive 
 | A-14 | A branch may override the trading settings but not `InvoiceNumberFormat`; numbering stays organization-wide | Document numbers stay comparable across branches; per-branch formats would need a migration to allow | Product |
 | A-15 | A tenant must keep at least one active branch, and a branch's default warehouse may not be deactivated | Both are states that make the POS unusable while looking like ordinary administration | Product |
 | A-16 | A tenant with no subscription row is unrestricted, and a plan limit whose counter is not implemented yet is reported rather than enforced | Fails open on missing information instead of blocking a paying customer; provisioning always writes a subscription (ADR-0030) | Engineering |
+| A-17 | A product with no tax class is taxed with the tenant's default class, and a class with no rate in force is exempt with a stated reason rather than a guessed rate | An unclassified product is taxed like the shop's ordinary goods; the alternative is an untaxed sale nobody notices | Finance |
+| A-18 | A catalog import is a dry run unless asked otherwise, is all-or-nothing when it is for real, and takes at most 5 000 rows per file | A shop never half-imports a supplier spreadsheet; large catalogues are split | Product |
+| A-19 | A barcode is unique per tenant and never globally, and a case barcode's pack quantity is what one scan sells | Two shops may print the same internal code; a case scan rings up the case | Product |
 
 ## 13. Open questions (asked, not assumed)
 
